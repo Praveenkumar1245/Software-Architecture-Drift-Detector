@@ -251,7 +251,7 @@ export const RegisterPage: React.FC = () => {
           </div>
           <div className="text-xs font-bold tracking-wider text-[#155EEF] uppercase">Drift Detector – Architecture Quality</div>
           <h1 className="text-[28px] font-bold text-[#071D3A] tracking-tight">
-            {step === 'verify_otp' ? 'Verify Your Email' : step === 'success' ? 'Account Activated' : 'Create Account'}
+            {step === 'verify_otp' ? 'Verify Your Email' : step === 'success' ? 'Account Activated' : 'Create Enterprise Account'}
           </h1>
           <p className="text-[15px] text-[#526078]">
             {step === 'verify_otp'
@@ -407,7 +407,7 @@ export const RegisterPage: React.FC = () => {
                 </>
               ) : (
                 <>
-                  <span>Sign Up</span>
+                  <span>Create Account</span>
                   <ArrowRight className="h-4 w-4" />
                 </>
               )}
