@@ -1,0 +1,131 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    font-size: 16px;
+    --sidebar-bg: #03162D;
+    --sidebar-header: #03162D;
+    --sidebar-text: #F8FAFC;
+    --sidebar-icon: #CBD5E1;
+    --sidebar-heading: #94A3B8;
+    --sidebar-active-bg: #005B60;
+    --sidebar-active-indicator: #00D4C7;
+    --sidebar-divider: #123047;
+
+    --bg-primary: #F8FAFC;
+    --bg-card: #FFFFFF;
+    --border-subtle: #D8E2EE;
+    --text-primary: #0F172A;
+    --text-secondary: #475569;
+    --primary-color: #03162D;
+    --primary-hover: #0A2548;
+    --turquoise-accent: #009F95;
+    --turquoise-bright: #00D4C7;
+    --color-success: #10B981;
+    --color-warning: #B45309;
+    --color-error: #B42318;
+    --color-info: #009F95;
+  }
+
+  body {
+    background-color: #F8FAFC;
+    color: #0F172A;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 1rem;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Form controls inherit fonts and size properly */
+  input, select, textarea, button {
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  code, pre, kbd {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  }
+
+  /* Accessible focus indicators for keyboard navigation */
+  :focus-visible {
+    outline: 2px solid #00D4C7 !important;
+    outline-offset: 2px !important;
+  }
+
+  #root {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background-color: #F8FAFC;
+  }
+}
+
+/* Standard Utility Classes */
+.theme-card {
+  background-color: #FFFFFF;
+  border: 1px solid #D8E2EE;
+  border-radius: 10px;
+  padding: 24px;
+}
+
+.theme-card-alt {
+  background-color: #F8FAFC;
+  border: 1px solid #D8E2EE;
+  border-radius: 10px;
+  padding: 24px;
+}
+
+.theme-btn-primary {
+  background-color: #03162D;
+  color: #FFFFFF;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: background-color 0.15s ease-in-out;
+}
+.theme-btn-primary:hover {
+  background-color: #0A2548;
+}
+
+.theme-btn-secondary {
+  background-color: #FFFFFF;
+  color: #0F172A;
+  border: 1px solid #D8E2EE;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: background-color 0.15s ease-in-out;
+}
+.theme-btn-secondary:hover {
+  background-color: #F8FAFC;
+}
+
+.theme-input {
+  background-color: #FFFFFF;
+  border: 1px solid #D8E2EE;
+  border-radius: 8px;
+  color: #0F172A;
+  font-size: 15px;
+}
+.theme-input:focus {
+  outline: none;
+  border-color: #00D4C7;
+  box-shadow: 0 0 0 3px rgba(0, 212, 199, 0.15);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #F1F5F9;
+}
+::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}

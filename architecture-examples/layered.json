@@ -1,0 +1,62 @@
+{
+  "name": "Standard Layered Architecture",
+  "description": "Enterprise 4-layer architecture with downward dependency rules",
+  "version": 1,
+  "components": [
+    {
+      "name": "presentation",
+      "layer": 1,
+      "description": "User interface, API controllers, routers, and request handlers",
+      "path_patterns": ["presentation/**", "routers/**", "api/**", "controllers/**"],
+      "allowed_dependencies": ["application", "domain"],
+      "forbidden_dependencies": ["infrastructure"]
+    },
+    {
+      "name": "application",
+      "layer": 2,
+      "description": "Application services, use cases, workflow orchestration",
+      "path_patterns": ["application/**", "services/**", "use_cases/**"],
+      "allowed_dependencies": ["domain"],
+      "forbidden_dependencies": ["presentation"]
+    },
+    {
+      "name": "domain",
+      "layer": 3,
+      "description": "Core business entities, value objects, domain logic",
+      "path_patterns": ["domain/**", "models/**", "entities/**"],
+      "allowed_dependencies": [],
+      "forbidden_dependencies": ["presentation", "infrastructure"]
+    },
+    {
+      "name": "infrastructure",
+      "layer": 4,
+      "description": "Database adapters, external APIs, persistence, messaging",
+      "path_patterns": ["infrastructure/**", "db/**", "repositories/**"],
+      "allowed_dependencies": ["domain"],
+      "forbidden_dependencies": ["presentation"]
+    }
+  ],
+  "rules": [
+    {
+      "id": "LAYER-DOWNWARD-001",
+      "type": "layer_direction",
+      "description": "Dependencies must only flow downward through layers. Lower layers cannot depend on upper layers.",
+      "severity": "critical",
+      "layer_direction": "downward_only"
+    },
+    {
+      "id": "FORBIDDEN-DOMAIN-TO-PRESENTATION",
+      "type": "forbidden_dependency",
+      "description": "Domain core must never depend directly on the presentation layer.",
+      "severity": "critical",
+      "from_component": "domain",
+      "to_component": "presentation"
+    },
+    {
+      "id": "NO-CYCLIC-DEPENDENCIES",
+      "type": "circular_dependency",
+      "description": "No cyclic dependencies are permitted between architectural components.",
+      "severity": "critical"
+    }
+  ]
+}

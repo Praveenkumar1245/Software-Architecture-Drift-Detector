@@ -1,0 +1,50 @@
+# Python virtual environments & bytecode
+.venv/
+venv/
+ENV/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+
+# Node & Frontend Build
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+.vite/
+*.tsbuildinfo
+
+# Local Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Project Extracted Source Archives & Runtime Data (Local workspace scratch/data)
+backend/data/
+scratch/
+
+# IDE and OS Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
