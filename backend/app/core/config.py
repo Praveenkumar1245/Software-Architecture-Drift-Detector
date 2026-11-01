@@ -74,6 +74,7 @@ class Settings:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "https://tamilselvan3660.github.io",
+        "https://praveenkumar1245.github.io",
     ]
     if os.getenv("FRONTEND_URL"):
         fe_raw = os.getenv("FRONTEND_URL").strip().rstrip("/")
