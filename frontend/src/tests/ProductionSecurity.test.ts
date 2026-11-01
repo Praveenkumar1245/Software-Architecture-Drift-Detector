@@ -108,50 +108,97 @@ describe('Production Readiness & Security Hardening Audit', () => {
   });
 
   describe('3. API URL Security & Origin Whitelist Validation', () => {
-    it('strictly rejects unapproved origins and insecure protocols', () => {
-      // Insecure HTTP to non-localhost
-      expect(isAllowedBackendOrigin('http://evil.com')).toBe(false);
-      expect(isAllowedBackendOrigin('http://my-render-app.onrender.com')).toBe(false);
+    it('strictly rejects protocol-relative URLs such as //example.com', () => {
+      // Protocol-relative URLs attempt to hijack the scheme while directing traffic to arbitrary external domains
+      expect(isAllowedBackendOrigin('//example.com')).toBe(false);
+      expect(isAllowedBackendOrigin('//example.com/api/v1')).toBe(false);
+      expect(isAllowedBackendOrigin('//evil.com')).toBe(false);
+      expect(isAllowedBackendOrigin('//attacker.org/steal-token')).toBe(false);
+      expect(isAllowedBackendOrigin('//software-architecture-drift-detector.onrender.com')).toBe(false);
 
-      // Untrusted HTTPS external origins
-      expect(isAllowedBackendOrigin('https://attacker.com')).toBe(false);
-      expect(isAllowedBackendOrigin('https://subdomain.attacker.com')).toBe(false);
-      expect(isAllowedBackendOrigin('https://evil-onrender.com.attacker.com')).toBe(false);
-      expect(isAllowedBackendOrigin('javascript:alert(1)')).toBe(false);
-      expect(isAllowedBackendOrigin('data:text/html,evil')).toBe(false);
-
-      // Null, empty, or undefined
-      expect(isAllowedBackendOrigin('')).toBe(false);
-      expect(isAllowedBackendOrigin(null as any)).toBe(false);
+      // Backslash evasion attempts
+      expect(isAllowedBackendOrigin('/\\example.com')).toBe(false);
+      expect(isAllowedBackendOrigin('\\\\example.com')).toBe(false);
+      expect(isAllowedBackendOrigin('\\/example.com')).toBe(false);
     });
 
-    it('approves legitimate production platforms and local development origins', () => {
-      // Loopback origins
+    it('strictly rejects unapproved external domains even if using HTTPS', () => {
+      expect(isAllowedBackendOrigin('https://example.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://attacker.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://evil-onrender.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://fake-onrender.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://onrender.com.attacker.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://subdomain.attacker.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://evil-railway.app.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://evil-fly.dev.org')).toBe(false);
+    });
+
+    it('strictly rejects insecure plain HTTP URLs on non-localhost hosts', () => {
+      expect(isAllowedBackendOrigin('http://example.com')).toBe(false);
+      expect(isAllowedBackendOrigin('http://evil.com')).toBe(false);
+      expect(isAllowedBackendOrigin('http://software-architecture-drift-detector.onrender.com')).toBe(false);
+      expect(isAllowedBackendOrigin('http://api-service.railway.app')).toBe(false);
+      expect(isAllowedBackendOrigin('http://api-service.fly.dev')).toBe(false);
+    });
+
+    it('strictly rejects malicious schemes, null, and empty inputs', () => {
+      expect(isAllowedBackendOrigin('javascript:alert(1)')).toBe(false);
+      expect(isAllowedBackendOrigin('data:text/html,<script>steal()</script>')).toBe(false);
+      expect(isAllowedBackendOrigin('file:///etc/passwd')).toBe(false);
+      expect(isAllowedBackendOrigin('')).toBe(false);
+      expect(isAllowedBackendOrigin('   ')).toBe(false);
+      expect(isAllowedBackendOrigin(null as any)).toBe(false);
+      expect(isAllowedBackendOrigin(undefined as any)).toBe(false);
+    });
+
+    it('approves legitimate HTTPS cloud deployment platforms and local development origins', () => {
+      // Loopback development origins
       expect(isAllowedBackendOrigin('http://localhost:8000')).toBe(true);
       expect(isAllowedBackendOrigin('http://127.0.0.1:8000')).toBe(true);
-      expect(isAllowedBackendOrigin('/api/v1')).toBe(true);
+      expect(isAllowedBackendOrigin('https://localhost:8000')).toBe(true);
 
-      // Render, Railway, Fly.dev HTTPS hosts
+      // Render approved HTTPS hosts
       expect(isAllowedBackendOrigin('https://software-architecture-drift-detector.onrender.com')).toBe(true);
+      expect(isAllowedBackendOrigin('https://onrender.com')).toBe(true);
+
+      // Railway approved HTTPS hosts
       expect(isAllowedBackendOrigin('https://api-service.railway.app')).toBe(true);
+      expect(isAllowedBackendOrigin('https://railway.app')).toBe(true);
+
+      // Fly.io approved HTTPS hosts
       expect(isAllowedBackendOrigin('https://api-service.fly.dev')).toBe(true);
+      expect(isAllowedBackendOrigin('https://fly.dev')).toBe(true);
     });
 
-    it('setCustomApiUrl rejects unapproved URLs and throws descriptive security errors', () => {
+    it('setCustomApiUrl rejects protocol-relative and malicious URLs with security error', () => {
+      // Protocol-relative
+      expect(() => setCustomApiUrl('//example.com')).toThrow(/Invalid backend URL/i);
+      expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
+
+      // Unapproved HTTPS domain
       expect(() => setCustomApiUrl('https://evil-phishing.com')).toThrow(/Invalid backend URL/i);
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
 
+      // Insecure plain HTTP on external host
       expect(() => setCustomApiUrl('http://insecure-domain.org')).toThrow(/Invalid backend URL/i);
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
+
+      // Valid HTTPS approved host passes
+      setCustomApiUrl('https://software-architecture-drift-detector.onrender.com');
+      expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBe(
+        'https://software-architecture-drift-detector.onrender.com/api/v1'
+      );
     });
 
     it('purges unapproved custom backend URLs stored in localStorage', () => {
-      localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, 'https://malicious-host.com/api/v1');
-      const base = getApiBaseUrl();
+      localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, '//example.com/api/v1');
+      let base = getApiBaseUrl();
+      expect(base).not.toContain('example.com');
+      expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
 
-      // Malicious URL should NOT be returned
+      localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, 'https://malicious-host.com/api/v1');
+      base = getApiBaseUrl();
       expect(base).not.toContain('malicious-host.com');
-      // Storage should be purged
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
     });
   });
@@ -174,6 +221,16 @@ describe('Production Readiness & Security Hardening Audit', () => {
 
       expect(capturedHeaders['Authorization']).toBe('Bearer valid-production-jwt-token-999');
       expect(capturedHeaders['X-Session-Token']).toBe('valid-production-jwt-token-999');
+    });
+
+    it('never sends tokens to untrusted destinations during downloads or uploads', async () => {
+      setStoredSessionToken('secret-session-token');
+
+      // Attempt to call download with an unapproved backend set in custom storage
+      localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, 'https://attacker.com/api/v1');
+
+      await expect(api.downloadCsvReport('scan-123')).rejects.toThrow();
+      await expect(api.downloadPdfReport('scan-123')).rejects.toThrow();
     });
 
     it('clears session token on 401 Unauthorized API responses', async () => {

@@ -34,14 +34,29 @@ if (typeof window !== 'undefined') {
 
 /**
  * Validates whether a target backend URL belongs to an explicitly approved origin.
- * In development, loopback HTTP/HTTPS is permitted.
- * In production, only HTTPS on explicitly trusted domains (*.onrender.com, *.railway.app, *.fly.dev)
- * or same-origin is accepted.
+ * - Does not automatically trust URLs just because they start with '/'.
+ * - Rejects protocol-relative URLs such as `//example.com`.
+ * - Parses URLs safely and validates the actual origin against trusted criteria.
+ * - In local development, loopback HTTP/HTTPS (localhost, 127.0.0.1, ::1) is permitted.
+ * - In production environments, strictly requires HTTPS.
+ * - Whitelists explicitly approved HTTPS deployment domains (*.onrender.com, *.railway.app, *.fly.dev)
+ *   or the build-time configured backend URL (VITE_API_URL / VITE_BACKEND_URL).
+ * - Ensures authentication tokens are never sent to an untrusted origin.
  */
 export function isAllowedBackendOrigin(urlStr: string): boolean {
   if (!urlStr || typeof urlStr !== 'string') return false;
   const trimmed = urlStr.trim();
-  if (trimmed.startsWith('/')) return true;
+  if (!trimmed) return false;
+
+  // Reject protocol-relative URLs (e.g. //example.com) and leading backslash evasion
+  if (
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('/\\') ||
+    trimmed.startsWith('\\\\') ||
+    trimmed.startsWith('\\/')
+  ) {
+    return false;
+  }
 
   try {
     const baseOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
@@ -49,22 +64,50 @@ export function isAllowedBackendOrigin(urlStr: string): boolean {
     const hostname = parsed.hostname.toLowerCase();
     const protocol = parsed.protocol.toLowerCase();
 
+    // Reject non-HTTP/HTTPS protocols (e.g. javascript:, data:, file:)
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      return false;
+    }
+
     // In local development, permit loopback over http or https
-    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    if (isLoopback) {
       return protocol === 'http:' || protocol === 'https:';
     }
 
-    // In production environments, strictly enforce HTTPS
+    // In production / remote environments, strictly enforce HTTPS
     if (protocol !== 'https:') {
       return false;
     }
 
-    // Explicitly approved backend deployment domains and same origin
+    // Check against build-time configured backend origin if present
+    const envUrl = (import.meta as any)?.env?.VITE_API_URL || (import.meta as any)?.env?.VITE_BACKEND_URL;
+    if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+      try {
+        const envParsed = new URL(envUrl.trim(), baseOrigin);
+        if (envParsed.protocol === 'https:' && envParsed.origin.toLowerCase() === parsed.origin.toLowerCase()) {
+          return true;
+        }
+      } catch {}
+    }
+
+    // Explicitly approved HTTPS cloud deployment domains
     if (
+      hostname === 'onrender.com' ||
       hostname.endsWith('.onrender.com') ||
+      hostname === 'railway.app' ||
       hostname.endsWith('.railway.app') ||
-      hostname.endsWith('.fly.dev') ||
-      (typeof window !== 'undefined' && hostname === window.location.hostname.toLowerCase())
+      hostname === 'fly.dev' ||
+      hostname.endsWith('.fly.dev')
+    ) {
+      return true;
+    }
+
+    // If frontend and backend share the exact same host (e.g. containerized monolith on approved host)
+    if (
+      typeof window !== 'undefined' &&
+      !isStaticProductionHost() &&
+      hostname === window.location.hostname.toLowerCase()
     ) {
       return true;
     }
@@ -499,7 +542,8 @@ export const api = {
     if (!base) {
       throw new Error('Backend connection required: Cannot upload archive without an active backend connection.');
     }
-    if (!isAllowedBackendOrigin(base)) {
+    const url = `${base}/projects/${projectId}/upload`;
+    if (!isAllowedBackendOrigin(url)) {
       throw new Error('Security Error: Untrusted backend origin for archive upload.');
     }
 
@@ -508,12 +552,12 @@ export const api = {
 
     const headers: Record<string, string> = {};
     const token = getStoredSessionToken();
-    if (token && isAllowedBackendOrigin(base)) {
+    if (token && isAllowedBackendOrigin(url)) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
     }
 
-    const res = await fetch(`${base}/projects/${projectId}/upload`, {
+    const res = await fetch(url, {
       method: 'POST',
       credentials: 'include',
       headers,
