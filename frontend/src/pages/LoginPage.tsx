@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { ShieldCheck, Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, CheckCircle2, RefreshCw } from 'lucide-react';
+import { ShieldCheck, Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, CheckCircle2, RefreshCw, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { api, getApiBaseUrl, setCustomApiUrl, getCustomApiUrl, isStaticProductionHost } from '../api/client';
 
@@ -20,7 +20,7 @@ export const LoginPage: React.FC = () => {
   const [resending, setResending] = useState(false);
 
   const isStaticHostWithoutBackend = isStaticProductionHost() && !getApiBaseUrl();
-  const [showApiConfig, setShowApiConfig] = useState(isStaticHostWithoutBackend);
+  const [showApiConfig, setShowApiConfig] = useState(false);
   const [customApiInput, setCustomApiInput] = useState(() => getCustomApiUrl() || '');
   const [apiSaveSuccess, setApiSaveSuccess] = useState(false);
 
@@ -78,8 +78,8 @@ export const LoginPage: React.FC = () => {
   const isUnverifiedError = error && error.toLowerCase().includes('not verified');
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-[#F8FAFC] p-4 font-sans text-[#0F172A]">
-      <div className="w-full max-w-md bg-white rounded-[10px] border border-[#D8E2EE] shadow-sm p-8 space-y-6">
+    <div className="min-h-screen w-full flex items-center justify-center bg-[#F8FAFC] py-8 px-4 font-sans text-[#0F172A]">
+      <div className="w-full max-w-md bg-white rounded-[10px] border border-[#D8E2EE] shadow-sm p-6 sm:p-8 space-y-6">
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center space-y-2">
           <div className="h-12 w-12 rounded-xl bg-[#03162D] border border-[#123047] flex items-center justify-center text-[#00D4C7] shadow-xs">
@@ -93,10 +93,10 @@ export const LoginPage: React.FC = () => {
         {isStaticHostWithoutBackend && (
           <div className="p-3.5 rounded-lg bg-[#EFF6FF] border border-[#155EEF]/30 text-xs text-[#1E40AF] flex items-start gap-2.5 shadow-xs">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-[#155EEF]" />
-            <div className="space-y-1">
+            <div className="space-y-1 flex-1 min-w-0">
               <p className="font-semibold text-[#1E3A8A]">Backend Connection Required</p>
-              <p className="text-[#3B82F6] leading-relaxed">
-                This site is hosted statically on GitHub Pages. To sign in and run scans, connect your deployed FastAPI backend below or run locally using <code className="bg-white px-1 py-0.5 rounded border border-[#BFDBFE]">start_servers.bat</code>.
+              <p className="text-[#3B82F6] leading-relaxed break-words">
+                This site is hosted statically on GitHub Pages. To sign in and run scans, connect your deployed FastAPI backend below or run locally using <code className="bg-white px-1 py-0.5 rounded border border-[#BFDBFE] font-mono text-[11px]">start_servers.bat</code>.
               </p>
             </div>
           </div>
@@ -247,33 +247,54 @@ export const LoginPage: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowApiConfig(!showApiConfig)}
-              className="text-[11px] text-[#526078] hover:text-[#172B4D] hover:underline cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-[#155EEF] hover:text-[#1247C7] hover:underline cursor-pointer transition-colors"
             >
-              {showApiConfig ? 'Hide API Connection Settings' : 'Configure Backend API Server'}
+              <Settings className="h-3.5 w-3.5 text-[#155EEF]" />
+              <span>{showApiConfig ? 'Hide API Connection Settings' : 'Configure Backend API Server'}</span>
             </button>
             {showApiConfig && (
-              <div className="mt-2.5 p-3 rounded-lg bg-[#F5F7FA] border border-[#D8E2EE] text-left space-y-2">
-                <div className="text-[11px] text-[#475569]">
-                  <span className="font-semibold text-[#0F172A]">Current Endpoint:</span>{' '}
-                  <code className="text-[#0A2548] font-mono break-all">{getApiBaseUrl()}</code>
+              <div className="w-full mt-2.5 p-3.5 rounded-lg bg-[#F8FAFC] border border-[#D8E2EE] text-left space-y-2.5 text-xs transition-all shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px]">
+                  <span className="font-semibold text-[#0F172A]">Current Endpoint:</span>
+                  <code className="text-[#155EEF] font-mono break-all bg-white px-1.5 py-0.5 rounded border border-[#E2E8F0] text-[11px]">
+                    {getApiBaseUrl() || '(Not Configured)'}
+                  </code>
                 </div>
-                <div className="text-[11px] text-[#64748B]">
-                  For static hosts like GitHub Pages, enter your deployed FastAPI URL (or tunnel URL) to communicate with your backend.
-                </div>
-                <form onSubmit={handleSaveApiUrl} className="flex gap-2">
+                <p className="text-[11px] text-[#475569] leading-relaxed">
+                  For static hosting on GitHub Pages, enter your deployed FastAPI URL (e.g.{' '}
+                  <code className="font-mono text-[#0F172A]">https://api.yourdomain.com</code>) to enable live authentication and scans.
+                </p>
+                <form onSubmit={handleSaveApiUrl} className="flex flex-col sm:flex-row gap-2 pt-1">
                   <input
                     type="url"
                     value={customApiInput}
                     onChange={(e) => setCustomApiInput(e.target.value)}
                     placeholder="https://api.yourdomain.com"
-                    className="flex-1 px-2.5 py-1.5 text-xs bg-white border border-[#D8E2EE] rounded focus:outline-none focus:border-[#00D4C7] font-mono"
+                    className="flex-1 min-w-0 px-3 py-2 text-xs bg-white border border-[#D8E2EE] rounded-lg focus:outline-none focus:border-[#00D4C7] focus:ring-1 focus:ring-[#00D4C7] font-mono text-[#0F172A] placeholder-[#94A3B8]"
                   />
-                  <button
-                    type="submit"
-                    className="px-3 py-1.5 text-xs font-semibold bg-[#03162D] text-white rounded hover:bg-[#0A2548] transition-colors cursor-pointer"
-                  >
-                    {apiSaveSuccess ? 'Saved!' : 'Save & Reload'}
-                  </button>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      type="submit"
+                      className="flex-1 sm:flex-none px-3.5 py-2 text-xs font-semibold bg-[#03162D] text-white rounded-lg hover:bg-[#0A2548] transition-colors cursor-pointer shadow-xs whitespace-nowrap"
+                    >
+                      {apiSaveSuccess ? 'Saved!' : 'Save & Reload'}
+                    </button>
+                    {customApiInput && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomApiUrl(null);
+                          setCustomApiInput('');
+                          setApiSaveSuccess(true);
+                          setTimeout(() => window.location.reload(), 400);
+                        }}
+                        className="px-2.5 py-2 text-xs font-medium text-[#475569] bg-white border border-[#D8E2EE] rounded-lg hover:bg-[#F1F5F9] transition-colors cursor-pointer whitespace-nowrap"
+                        title="Reset to default"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
                 </form>
               </div>
             )}
