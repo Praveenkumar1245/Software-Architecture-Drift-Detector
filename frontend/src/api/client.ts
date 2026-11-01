@@ -221,28 +221,16 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
     } as unknown as T;
   }
 
-  // Projects
-  if (cleanEndpoint === '/projects') {
-    if (method === 'POST') {
-      let body: any = {};
-      try { body = JSON.parse(options.body as string); } catch {}
-      return {
-        id: 'proj-' + Date.now(),
-        name: body.name || 'Software Project',
-        description: body.description || '',
-        repository_type: 'local_zip',
-        repository_path: 'sample-project/app',
-        primary_language: 'python',
-        source_dirs: body.source_dirs || 'app,src',
-        exclude_dirs: body.exclude_dirs || '.venv,venv,__pycache__,tests,dist,build,node_modules,.git',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        total_scans: 0,
-        open_findings_count: 0,
-        critical_findings_count: 0,
-      } as unknown as T;
-    }
-    return [
+  // Projects Persistence Helpers
+  const getStoredOfflineProjects = (): Project[] => {
+    try {
+      const raw = localStorage.getItem('drift_offline_projects');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    const defaultList: Project[] = [
       {
         id: 'proj-ecommerce-drift',
         name: 'Software Architecture Drift Detector',
@@ -261,28 +249,68 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
         open_findings_count: 2,
         critical_findings_count: 1,
       }
-    ] as unknown as T;
+    ];
+    try {
+      localStorage.setItem('drift_offline_projects', JSON.stringify(defaultList));
+    } catch {}
+    return defaultList;
+  };
+
+  const saveStoredOfflineProjects = (projectsList: Project[]): void => {
+    try {
+      localStorage.setItem('drift_offline_projects', JSON.stringify(projectsList));
+    } catch {}
+  };
+
+  // Projects
+  if (cleanEndpoint === '/projects') {
+    if (method === 'POST') {
+      let body: any = {};
+      try { body = JSON.parse(options.body as string); } catch {}
+      const newProj: Project = {
+        id: 'proj-' + Date.now(),
+        name: body.name || 'Software Project',
+        description: body.description || '',
+        repository_type: body.repository_type || 'local_zip',
+        repository_path: body.repository_path || 'sample-project/app',
+        primary_language: body.primary_language || 'python',
+        source_dirs: body.source_dirs || 'app,src',
+        exclude_dirs: body.exclude_dirs || '.venv,venv,__pycache__,tests,dist,build,node_modules,.git',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        total_scans: 0,
+        open_findings_count: 0,
+        critical_findings_count: 0,
+      };
+      const list = getStoredOfflineProjects();
+      list.unshift(newProj);
+      saveStoredOfflineProjects(list);
+      return newProj as unknown as T;
+    }
+    return getStoredOfflineProjects() as unknown as T;
   }
 
   if (cleanEndpoint.startsWith('/projects/') && !cleanEndpoint.includes('/scans')) {
-    return {
-      id: 'proj-ecommerce-drift',
-      name: 'Software Architecture Drift Detector',
-      description: 'Production architecture inspection workspace comparing clean layered architecture against AST-extracted dependencies.',
-      repository_type: 'local_zip',
-      repository_path: 'sample-project/app',
-      primary_language: 'python',
-      source_dirs: 'app,src',
-      exclude_dirs: '.venv,venv,__pycache__,tests,dist,build,node_modules,.git',
-      created_at: '2026-10-29T18:00:00Z',
-      updated_at: new Date().toISOString(),
-      total_scans: 4,
-      latest_scan_status: 'completed',
-      latest_scan_timestamp: new Date().toISOString(),
-      latest_compliance_percentage: 85.7,
-      open_findings_count: 2,
-      critical_findings_count: 1,
-    } as unknown as T;
+    const projId = cleanEndpoint.replace('/projects/', '');
+    if (method === 'DELETE') {
+      const list = getStoredOfflineProjects().filter((p) => p.id !== projId);
+      saveStoredOfflineProjects(list);
+      return {} as unknown as T;
+    }
+    if (method === 'PUT') {
+      let body: any = {};
+      try { body = JSON.parse(options.body as string); } catch {}
+      const list = getStoredOfflineProjects();
+      const idx = list.findIndex((p) => p.id === projId);
+      if (idx >= 0) {
+        list[idx] = { ...list[idx], ...body, updated_at: new Date().toISOString() };
+        saveStoredOfflineProjects(list);
+        return list[idx] as unknown as T;
+      }
+    }
+    const found = getStoredOfflineProjects().find((p) => p.id === projId);
+    if (found) return found as unknown as T;
+    return getStoredOfflineProjects()[0] as unknown as T;
   }
 
   // Architecture Templates
@@ -381,9 +409,12 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
 
   // Scans
   if (cleanEndpoint === '/scans' || (cleanEndpoint.startsWith('/projects/') && cleanEndpoint.endsWith('/scans'))) {
+    const matchProjId = cleanEndpoint.startsWith('/projects/')
+      ? cleanEndpoint.split('/')[2]
+      : 'proj-ecommerce-drift';
     const scanObj = {
       id: 'scan-run-latest-001',
-      project_id: 'proj-ecommerce-drift',
+      project_id: matchProjId,
       architecture_id: 'arch-layered-001',
       status: 'completed',
       started_at: new Date(Date.now() - 3600000).toISOString(),
@@ -402,14 +433,19 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
       created_at: new Date(Date.now() - 3600000).toISOString(),
     };
     if (cleanEndpoint === '/scans' && method === 'POST') {
+      let body: any = {};
+      try { body = JSON.parse(options.body as string); } catch {}
+      if (body.project_id) scanObj.project_id = body.project_id;
+      if (body.source_version) scanObj.source_version = body.source_version;
       return scanObj as unknown as T;
     }
     return [scanObj] as unknown as T;
   }
 
   if (cleanEndpoint.startsWith('/scans/') && !cleanEndpoint.includes('/findings') && !cleanEndpoint.includes('/graph') && !cleanEndpoint.includes('/report') && !cleanEndpoint.includes('/compare')) {
+    const scanId = cleanEndpoint.replace('/scans/', '');
     return {
-      id: 'scan-run-latest-001',
+      id: scanId || 'scan-run-latest-001',
       project_id: 'proj-ecommerce-drift',
       architecture_id: 'arch-layered-001',
       status: 'completed',
@@ -491,6 +527,8 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
   // Dependency Graph
   if (cleanEndpoint.includes('/graph')) {
     return {
+      scan_id: 'scan-run-latest-001',
+      project_id: 'proj-ecommerce-drift',
       nodes: [
         { id: 'app.presentation.routes', label: 'presentation.routes', component: 'presentation', layer: 1, node_type: 'module', file_path: 'app/presentation/routes.py', is_violation: false, classes_count: 1, functions_count: 4, imports_count: 3 },
         { id: 'app.application.order_service', label: 'application.order_service', component: 'application', layer: 2, node_type: 'module', file_path: 'app/application/order_service.py', is_violation: false, classes_count: 1, functions_count: 3, imports_count: 4 },
@@ -503,19 +541,39 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
         { id: 'e3', source: 'app.application.order_service', target: 'app.infrastructure.database', source_component: 'application', target_component: 'infrastructure', is_violation: false, edge_type: 'actual' },
         { id: 'e4', source: 'app.domain.order', target: 'app.presentation.routes', source_component: 'domain', target_component: 'presentation', is_violation: true, violation_rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION', import_line: 11, import_statement: 'from app.presentation.routes import format_currency_response', edge_type: 'forbidden' },
       ],
-      summary: {
-        total_nodes: 4,
-        total_edges: 4,
-        violation_edges: 1,
-        cycles_detected: 1,
-        components: ['presentation', 'application', 'domain', 'infrastructure'],
-      }
+      components: ['presentation', 'application', 'domain', 'infrastructure'],
+      total_modules: 4,
+      total_dependencies: 4,
+      total_violations: 1,
     } as unknown as T;
   }
 
   // Overview
   if (cleanEndpoint.startsWith('/overview')) {
+    const scanObj = {
+      id: 'scan-run-latest-001',
+      project_id: 'proj-ecommerce-drift',
+      architecture_id: 'arch-layered-001',
+      status: 'completed' as const,
+      started_at: new Date(Date.now() - 3600000).toISOString(),
+      completed_at: new Date(Date.now() - 3550000).toISOString(),
+      duration_ms: 50420,
+      source_version: 'v1.4.2-audit',
+      files_analyzed: 14,
+      modules_discovered: 8,
+      dependencies_discovered: 12,
+      total_findings: 2,
+      critical_findings: 1,
+      high_findings: 1,
+      medium_findings: 0,
+      low_findings: 0,
+      compliance_percentage: 85.7,
+      created_at: new Date(Date.now() - 3600000).toISOString(),
+    };
+
     return {
+      project_id: 'proj-ecommerce-drift',
+      project_name: 'Software Architecture Drift Detector',
       total_projects: 1,
       total_scans: 4,
       total_findings: 2,
@@ -523,45 +581,220 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
       high_findings: 1,
       medium_findings: 0,
       low_findings: 0,
-      average_compliance: 85.7,
-      scans_trend: [
-        { date: '2026-10-29', compliance: 71.4, findings: 4 },
-        { date: '2026-10-30', compliance: 78.5, findings: 3 },
-        { date: '2026-10-31', compliance: 85.7, findings: 2 },
-        { date: '2026-11-01', compliance: 85.7, findings: 2 },
+      compliance_percentage: 85.7,
+      latest_scan: scanObj,
+      severity_distribution: {
+        critical: 1,
+        high: 1,
+        medium: 0,
+        low: 0,
+      },
+      trends: [
+        {
+          timestamp: '2026-10-29',
+          scan_id: 'scan-run-earliest',
+          compliance_percentage: 71.4,
+          total_findings: 4,
+          critical_findings: 2,
+          high_findings: 2,
+        },
+        {
+          timestamp: '2026-10-30',
+          scan_id: 'scan-run-mid-1',
+          compliance_percentage: 78.5,
+          total_findings: 3,
+          critical_findings: 1,
+          high_findings: 2,
+        },
+        {
+          timestamp: '2026-10-31',
+          scan_id: 'scan-run-mid-2',
+          compliance_percentage: 85.7,
+          total_findings: 2,
+          critical_findings: 1,
+          high_findings: 1,
+        },
+        {
+          timestamp: '2026-11-01',
+          scan_id: 'scan-run-latest-001',
+          compliance_percentage: 85.7,
+          total_findings: 2,
+          critical_findings: 1,
+          high_findings: 1,
+        },
       ],
-      findings_by_severity: [
-        { severity: 'critical', count: 1 },
-        { severity: 'high', count: 1 },
-        { severity: 'medium', count: 0 },
-        { severity: 'low', count: 0 },
+      top_violated_rules: [
+        {
+          rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION',
+          rule_type: 'forbidden_dependency',
+          severity: 'critical',
+          count: 1,
+          description: 'Domain layer must never import presentation concerns',
+        },
+        {
+          rule_id: 'LAYER-DIRECTION-RULE',
+          rule_type: 'layer_violation',
+          severity: 'high',
+          count: 1,
+          description: 'Lower layers must not depend on higher layers',
+        },
       ],
-      findings_by_component: [
-        { component: 'domain', count: 2 },
-        { component: 'presentation', count: 0 },
-        { component: 'application', count: 0 },
-        { component: 'infrastructure', count: 0 },
+      component_stats: [
+        {
+          component: 'presentation',
+          layer: 1,
+          modules_count: 2,
+          incoming_dependencies: 1,
+          outgoing_dependencies: 1,
+          violations_count: 0,
+          is_compliant: true,
+        },
+        {
+          component: 'application',
+          layer: 2,
+          modules_count: 2,
+          incoming_dependencies: 1,
+          outgoing_dependencies: 2,
+          violations_count: 0,
+          is_compliant: true,
+        },
+        {
+          component: 'domain',
+          layer: 3,
+          modules_count: 2,
+          incoming_dependencies: 1,
+          outgoing_dependencies: 1,
+          violations_count: 2,
+          is_compliant: false,
+        },
+        {
+          component: 'infrastructure',
+          layer: 4,
+          modules_count: 2,
+          incoming_dependencies: 1,
+          outgoing_dependencies: 0,
+          violations_count: 0,
+          is_compliant: true,
+        },
       ],
-      rules_violated_ranking: [
-        { rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION', description: 'Domain must never import presentation concerns', count: 1 },
-        { rule_id: 'LAYER-DIRECTION-RULE', description: 'Lower layers must not depend on higher layers', count: 1 },
-      ]
     } as unknown as T;
   }
 
   // Scan Comparison
   if (cleanEndpoint.includes('/compare/')) {
+    const scanObjA = {
+      id: 'scan-run-earlier',
+      project_id: 'proj-ecommerce-drift',
+      architecture_id: 'arch-layered-001',
+      status: 'completed' as const,
+      started_at: new Date(Date.now() - 86400000).toISOString(),
+      completed_at: new Date(Date.now() - 86350000).toISOString(),
+      duration_ms: 48100,
+      source_version: 'v1.4.1-baseline',
+      files_analyzed: 14,
+      modules_discovered: 8,
+      dependencies_discovered: 12,
+      total_findings: 3,
+      critical_findings: 1,
+      high_findings: 1,
+      medium_findings: 1,
+      low_findings: 0,
+      compliance_percentage: 78.5,
+      created_at: new Date(Date.now() - 86400000).toISOString(),
+    };
+    const scanObjB = {
+      id: 'scan-run-latest-001',
+      project_id: 'proj-ecommerce-drift',
+      architecture_id: 'arch-layered-001',
+      status: 'completed' as const,
+      started_at: new Date(Date.now() - 3600000).toISOString(),
+      completed_at: new Date(Date.now() - 3550000).toISOString(),
+      duration_ms: 50420,
+      source_version: 'v1.4.2-audit',
+      files_analyzed: 14,
+      modules_discovered: 8,
+      dependencies_discovered: 12,
+      total_findings: 2,
+      critical_findings: 1,
+      high_findings: 1,
+      medium_findings: 0,
+      low_findings: 0,
+      compliance_percentage: 85.7,
+      created_at: new Date(Date.now() - 3600000).toISOString(),
+    };
     return {
-      scan_a_id: 'scan-run-earlier',
-      scan_b_id: 'scan-run-latest-001',
+      scan_a: scanObjA,
+      scan_b: scanObjB,
       compliance_delta: 7.2,
+      findings_delta: -1,
       new_findings: [],
       resolved_findings: [
-        { id: 'res-001', title: 'Circular dependency between application and infrastructure resolved', severity: 'medium' }
+        {
+          id: 'res-001',
+          scan_id: 'scan-run-earlier',
+          project_id: 'proj-ecommerce-drift',
+          rule_id: 'CIRCULAR-DEPENDENCY-RULE',
+          rule_type: 'circular_dependency',
+          title: 'Circular dependency between application and infrastructure resolved',
+          explanation: 'Previous circular loop was broken by introducing repository interfaces.',
+          severity: 'medium',
+          status: 'resolved',
+          source_component: 'application',
+          target_component: 'infrastructure',
+          confidence: 'high',
+          first_detected_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+          last_detected_at: new Date(Date.now() - 86400000).toISOString(),
+          created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
+          updated_at: new Date().toISOString(),
+        }
       ],
       persistent_findings: [
-        { id: 'find-001', title: 'Domain Layer Violates Architecture: Direct dependency on Presentation Layer', severity: 'critical' },
-        { id: 'find-002', title: 'Layer Direction Violation: Upward dependency from Layer 3 (Domain) to Layer 1 (Presentation)', severity: 'high' },
+        {
+          id: 'find-001',
+          scan_id: 'scan-run-latest-001',
+          project_id: 'proj-ecommerce-drift',
+          rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION',
+          rule_type: 'forbidden_dependency',
+          title: 'Domain Layer Violates Architecture: Direct dependency on Presentation Layer',
+          explanation: 'Module app.domain.order directly imports format_currency_response from app.presentation.routes.',
+          severity: 'critical',
+          status: 'open',
+          source_component: 'domain',
+          target_component: 'presentation',
+          source_module: 'app.domain.order',
+          target_module: 'app.presentation.routes',
+          file_path: 'app/domain/order.py',
+          line_number: 11,
+          evidence: 'from app.presentation.routes import format_currency_response',
+          confidence: 'high',
+          first_detected_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+          last_detected_at: new Date().toISOString(),
+          created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+        {
+          id: 'find-002',
+          scan_id: 'scan-run-latest-001',
+          project_id: 'proj-ecommerce-drift',
+          rule_id: 'LAYER-DIRECTION-RULE',
+          rule_type: 'layer_violation',
+          title: 'Layer Direction Violation: Upward dependency from Layer 3 (Domain) to Layer 1 (Presentation)',
+          explanation: 'Lower layer components are strictly forbidden from depending on higher layer components.',
+          severity: 'high',
+          status: 'open',
+          source_component: 'domain',
+          target_component: 'presentation',
+          source_module: 'app.domain.order',
+          target_module: 'app.presentation.routes',
+          file_path: 'app/domain/order.py',
+          line_number: 11,
+          evidence: 'from app.presentation.routes import format_currency_response',
+          confidence: 'high',
+          first_detected_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+          last_detected_at: new Date().toISOString(),
+          created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
+          updated_at: new Date().toISOString(),
+        }
       ]
     } as unknown as T;
   }

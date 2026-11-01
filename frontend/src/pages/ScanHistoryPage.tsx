@@ -166,7 +166,7 @@ export const ScanHistoryPage: React.FC = () => {
                     New Violations
                   </span>
                   <span className="text-lg font-bold text-[#B42318] mt-1 block">
-                    +{comparison.new_findings.length}
+                    +{(comparison.new_findings?.length ?? 0)}
                   </span>
                 </div>
 
@@ -175,7 +175,7 @@ export const ScanHistoryPage: React.FC = () => {
                     Resolved Findings
                   </span>
                   <span className="text-lg font-bold text-[#10B981] mt-1 block">
-                    -{comparison.resolved_findings.length}
+                    -{(comparison.resolved_findings?.length ?? 0)}
                   </span>
                 </div>
 
@@ -184,13 +184,13 @@ export const ScanHistoryPage: React.FC = () => {
                     Persistent Findings
                   </span>
                   <span className="text-lg font-bold text-[#0F172A] mt-1 block">
-                    {comparison.persistent_findings.length}
+                    {(comparison.persistent_findings?.length ?? 0)}
                   </span>
                 </div>
               </div>
 
               {/* Breakdown lists */}
-              {comparison.new_findings.length > 0 && (
+              {(comparison.new_findings?.length ?? 0) > 0 && (
                 <div className="bg-[#FEE2E2] p-4 rounded-lg border border-[#FECACA]">
                   <span className="font-semibold text-[#B42318] block mb-1">
                     Newly Introduced Drift Findings:
@@ -205,7 +205,7 @@ export const ScanHistoryPage: React.FC = () => {
                 </div>
               )}
 
-              {comparison.resolved_findings.length > 0 && (
+              {(comparison.resolved_findings?.length ?? 0) > 0 && (
                 <div className="bg-[#E8F5E9] p-4 rounded-lg border border-[#C8E6C9]">
                   <span className="font-semibold text-[#10B981] block mb-1">
                     Resolved Architectural Drift:

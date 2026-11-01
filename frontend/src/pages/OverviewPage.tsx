@@ -257,7 +257,7 @@ export const OverviewPage: React.FC = () => {
           <h2 className="text-[18px] font-semibold text-[#0F172A] mb-1">Compliance Trend</h2>
           <p className="text-sm text-[#475569] mb-4">Historical rule compliance over previous scans</p>
           <div className="h-64 w-full">
-            {metrics && metrics.trends.length > 0 ? (
+            {metrics && (metrics.trends?.length ?? 0) > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={metrics.trends} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#D8E2EE" />
@@ -303,7 +303,7 @@ export const OverviewPage: React.FC = () => {
             Most Frequently Violated Rules
           </h2>
           <p className="text-sm text-[#475569] mb-4">Top rules triggering architectural drift</p>
-          {metrics && metrics.top_violated_rules.length > 0 ? (
+          {metrics && (metrics.top_violated_rules?.length ?? 0) > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-[#0F172A]">
                 <caption className="sr-only">Top violated architectural rules</caption>
@@ -358,7 +358,7 @@ export const OverviewPage: React.FC = () => {
             Component Boundaries & Status
           </h2>
           <p className="text-sm text-[#475569] mb-4">Modules and dependency distribution per component</p>
-          {metrics && metrics.component_stats.length > 0 ? (
+          {metrics && (metrics.component_stats?.length ?? 0) > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-[#0F172A]">
                 <caption className="sr-only">Component compliance status and dependency counts</caption>

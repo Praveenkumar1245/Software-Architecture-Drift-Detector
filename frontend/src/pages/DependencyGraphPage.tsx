@@ -119,7 +119,7 @@ export const DependencyGraphPage: React.FC = () => {
     }
 
     // Assign positions in a layered / grid arrangement
-    const components = graphData.components;
+    const components = graphData.components || [];
     const compXMap: Record<string, number> = {};
     components.forEach((c, idx) => {
       compXMap[c] = idx * 300;
