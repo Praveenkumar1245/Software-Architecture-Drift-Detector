@@ -40,6 +40,14 @@ jobs:
           VITE_BASE_PATH: /Software-Architecture-Drift-Detector/
         run: npm run build
 
+      - name: Verify build artifacts
+        run: |
+          if [ ! -f "frontend/dist/index.html" ]; then
+            echo "::error::Build verification failed: frontend/dist/index.html is missing!"
+            exit 1
+          fi
+          echo "Build verification passed: frontend/dist/index.html is present."
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
