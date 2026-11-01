@@ -3,6 +3,8 @@ import json
 import logging
 import smtplib
 import urllib.request
+import urllib.error
+import re
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -33,6 +35,7 @@ class EmailService:
     ) -> Dict[str, Any]:
         """
         Sends transactional email via Brevo HTTP API v3.
+        Returns status dictionary with accepted/rejected state, messageId, or provider error details.
         """
         url = "https://api.brevo.com/v3/smtp/email"
         sender_email = settings.BREVO_SENDER_EMAIL or settings.SMTP_FROM_EMAIL or "pirajan20012009@gmail.com"
@@ -61,21 +64,69 @@ class EmailService:
                 "api-key": settings.BREVO_API_KEY.strip(),
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                "User-Agent": "SoftwareArchitectureDriftDetector/1.0"
             }
         )
 
         logger.info(f"Dispatching transactional email to {to_email} via Brevo API...")
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-            message_id = data.get("messageId", "")
-            logger.info(f"Email delivered via Brevo API to {to_email} (messageId: {message_id})")
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode())
+                message_id = data.get("messageId", "")
+                logger.info(f"Email accepted via Brevo API for {to_email} (messageId: {message_id})")
+                return {
+                    "delivered": True,
+                    "status": "accepted",
+                    "method": "brevo_api",
+                    "recipient": to_email,
+                    "message_id": message_id,
+                    "message": f"Email delivered to {to_email} via Brevo API (messageId: {message_id})"
+                }
+        except urllib.error.HTTPError as e:
+            raw_body = ""
+            try:
+                raw_body = e.read().decode("utf-8")
+                parsed = json.loads(raw_body)
+                err_text = parsed.get("message") or parsed.get("detail") or raw_body
+            except Exception:
+                err_text = str(e)
+
+            # Detect Brevo IP Whitelist restriction
+            if "unrecognised IP address" in err_text or "authorised_ips" in err_text:
+                ip_match = re.search(r"(\d+\.\d+\.\d+\.\d+)", err_text)
+                detected_ip = ip_match.group(1) if ip_match else "your IP"
+                diagnostic = (
+                    f"Brevo API error (401 Unauthorized): Unrecognised IP address ({detected_ip}). "
+                    f"Please add IP {detected_ip} in Brevo at https://app.brevo.com/security/authorised_ips "
+                    f"or disable IP restrictions in Brevo Security settings."
+                )
+            elif e.code == 401:
+                diagnostic = f"Brevo API error (401 Unauthorized): Invalid API key or unverified sender {sender_email}."
+            elif e.code == 400:
+                diagnostic = f"Brevo API error (400 Bad Request): {err_text}"
+            else:
+                diagnostic = f"Brevo API HTTP {e.code} error: {err_text}"
+
+            logger.error(f"Brevo API delivery failed to {to_email}: {diagnostic}")
             return {
-                "delivered": True,
+                "delivered": False,
+                "status": "failed",
                 "method": "brevo_api",
                 "recipient": to_email,
-                "message_id": message_id,
-                "message": f"Email delivered to {to_email} via Brevo API"
+                "http_status": e.code,
+                "error": diagnostic,
+                "message": diagnostic
+            }
+        except Exception as ex:
+            diagnostic = f"Brevo API connection error: {str(ex)}"
+            logger.error(f"Brevo API delivery failed to {to_email}: {diagnostic}")
+            return {
+                "delivered": False,
+                "status": "failed",
+                "method": "brevo_api",
+                "recipient": to_email,
+                "error": diagnostic,
+                "message": diagnostic
             }
 
     @classmethod
@@ -922,6 +973,110 @@ The Drift Detector – Architecture Quality Team
         )
 
     @classmethod
+    def _send_via_smtp(
+        cls,
+        to_email: str,
+        subject: str,
+        text_content: str,
+        html_content: str
+    ) -> Dict[str, Any]:
+        """
+        Sends transactional email via SMTP relay (Brevo SMTP, Gmail SMTP, AWS SES, or custom SMTP).
+        Supports SSL (port 465) and STARTTLS (port 587, 25, 2525).
+        """
+        sender_email = settings.SMTP_FROM_EMAIL or settings.BREVO_SENDER_EMAIL or "pirajan20012009@gmail.com"
+        sender_name = settings.SMTP_FROM_NAME or settings.BREVO_SENDER_NAME or "Software Architecture Drift Detector"
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{sender_name} <{sender_email}>"
+        msg["To"] = to_email
+
+        part1 = MIMEText(text_content, "plain")
+        part2 = MIMEText(html_content, "html")
+        msg.attach(part1)
+        msg.attach(part2)
+
+        use_ssl = getattr(settings, "SMTP_USE_SSL", False) or settings.SMTP_PORT == 465
+        logger.info(f"Connecting to SMTP server {settings.SMTP_HOST}:{settings.SMTP_PORT} (SSL={use_ssl}, TLS={settings.SMTP_USE_TLS})...")
+
+        server = None
+        try:
+            if use_ssl:
+                server = smtplib.SMTP_SSL(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
+            else:
+                server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
+                if settings.SMTP_USE_TLS:
+                    server.starttls()
+
+            if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
+                server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+
+            server.sendmail(sender_email, [to_email], msg.as_string())
+            logger.info(f"Email successfully accepted by SMTP server for {to_email}")
+            return {
+                "delivered": True,
+                "status": "accepted",
+                "method": "smtp",
+                "recipient": to_email,
+                "message": f"Email successfully accepted by SMTP server ({settings.SMTP_HOST}) for {to_email}"
+            }
+        except smtplib.SMTPAuthenticationError as auth_err:
+            diagnostic = (
+                f"SMTP Authentication failed (code 535) for user '{settings.SMTP_USERNAME}'. "
+                f"If using Brevo, ensure you use the dedicated SMTP key from Brevo (SMTP & API > SMTP keys), "
+                f"not the API key. If using Gmail, use a 16-character Google App Password."
+            )
+            logger.error(f"SMTP delivery failed to {to_email}: {diagnostic}")
+            return {
+                "delivered": False,
+                "status": "failed",
+                "method": "smtp",
+                "recipient": to_email,
+                "error": diagnostic,
+                "message": diagnostic
+            }
+        except smtplib.SMTPSenderRefused as sender_err:
+            diagnostic = f"SMTP sender rejected ({sender_err.smtp_code}): {sender_err.smtp_error.decode() if isinstance(sender_err.smtp_error, bytes) else sender_err.smtp_error}. Check SMTP_FROM_EMAIL."
+            logger.error(f"SMTP delivery failed to {to_email}: {diagnostic}")
+            return {
+                "delivered": False,
+                "status": "failed",
+                "method": "smtp",
+                "recipient": to_email,
+                "error": diagnostic,
+                "message": diagnostic
+            }
+        except smtplib.SMTPRecipientsRefused as rec_err:
+            diagnostic = f"SMTP recipient rejected: {rec_err}"
+            logger.error(f"SMTP delivery failed to {to_email}: {diagnostic}")
+            return {
+                "delivered": False,
+                "status": "failed",
+                "method": "smtp",
+                "recipient": to_email,
+                "error": diagnostic,
+                "message": diagnostic
+            }
+        except Exception as e:
+            diagnostic = f"SMTP connection/delivery error ({settings.SMTP_HOST}:{settings.SMTP_PORT}): {str(e)}"
+            logger.error(f"SMTP delivery failed to {to_email}: {diagnostic}")
+            return {
+                "delivered": False,
+                "status": "failed",
+                "method": "smtp",
+                "recipient": to_email,
+                "error": diagnostic,
+                "message": diagnostic
+            }
+        finally:
+            if server:
+                try:
+                    server.quit()
+                except Exception:
+                    pass
+
+    @classmethod
     def _send_or_simulate(
         cls,
         to_email: str,
@@ -933,9 +1088,9 @@ The Drift Detector – Architecture Quality Team
         action_url: str
     ) -> Dict[str, Any]:
         """
-        Delivers via Brevo API if configured.
-        Falls back to SMTP relay if Brevo API is not set.
-        Falls back to development mailbox if EMAIL_TEST_MODE is enabled.
+        Attempts real live delivery via Brevo API or SMTP.
+        Captures to development mailbox if EMAIL_TEST_MODE is enabled or as fallback audit record.
+        Never reports delivered=True if real delivery failed.
         """
         def _record_to_mailbox(delivery_info: Dict[str, Any]):
             try:
@@ -961,103 +1116,28 @@ The Drift Detector – Architecture Quality Team
             except Exception as ex:
                 logger.debug(f"Mailbox recording skipped: {ex}")
 
-        # In unit tests, immediately record to dev mailbox
+        # Unit tests mode
         if os.environ.get("PYTEST_CURRENT_TEST"):
             dev_res = {
                 "delivered": True,
+                "status": "test_mode",
                 "method": "development_mailbox",
                 "recipient": to_email,
                 "action_url": action_url,
-                "message": f"Test mode: Email captured to dev mailbox"
+                "token": token,
+                "message": "Test mode: Email captured to dev mailbox"
             }
             _record_to_mailbox(dev_res)
             return dev_res
 
-        # 1. Brevo REST API v3
-        if cls.is_brevo_configured():
-            try:
-                res = cls._send_via_brevo_api(
-                    to_email=to_email,
-                    subject=subject,
-                    text_content=text_content,
-                    html_content=html_content
-                )
-                _record_to_mailbox(res)
-                return res
-            except Exception as e:
-                logger.error(f"Brevo API delivery failed to {to_email}: {str(e)}")
-                if not cls.is_smtp_configured() and not settings.EMAIL_TEST_MODE:
-                    # Still record to mailbox so user is not completely blocked
-                    fallback_res = {
-                        "delivered": False,
-                        "method": "development_mailbox",
-                        "recipient": to_email,
-                        "action_url": action_url,
-                        "message": f"Brevo delivery failed ({str(e)}), captured to dev mailbox"
-                    }
-                    _record_to_mailbox(fallback_res)
-                    raise RuntimeError(f"Brevo API delivery failure: {str(e)}")
-                logger.warning("Brevo API delivery failed; attempting fallback delivery.")
-
-        # 2. SMTP Delivery (Brevo SMTP relay or custom SMTP)
-        if cls.is_smtp_configured():
-            try:
-                msg = MIMEMultipart("alternative")
-                msg["Subject"] = subject
-                msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM_EMAIL}>"
-                msg["To"] = to_email
-
-                part1 = MIMEText(text_content, "plain")
-                part2 = MIMEText(html_content, "html")
-                msg.attach(part1)
-                msg.attach(part2)
-
-                logger.info(f"Connecting to SMTP server {settings.SMTP_HOST}:{settings.SMTP_PORT}...")
-                server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=15)
-                try:
-                    if settings.SMTP_USE_TLS:
-                        server.starttls()
-                    if settings.SMTP_USERNAME and settings.SMTP_PASSWORD:
-                        server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-                    server.sendmail(settings.SMTP_FROM_EMAIL, [to_email], msg.as_string())
-                    logger.info(f"Email successfully sent via SMTP to {to_email}")
-                    res = {
-                        "delivered": True,
-                        "method": "smtp",
-                        "recipient": to_email,
-                        "message": f"Email delivered to {to_email} via SMTP"
-                    }
-                    _record_to_mailbox(res)
-                    return res
-                finally:
-                    try:
-                        server.quit()
-                    except Exception:
-                        pass
-            except Exception as e:
-                logger.error(f"SMTP delivery failed to {to_email}: {str(e)}")
-                fallback_res = {
-                    "delivered": False,
-                    "method": "development_mailbox",
-                    "recipient": to_email,
-                    "action_url": action_url,
-                    "token": token,
-                    "message": f"Live delivery failed ({str(e)}), captured to dev mailbox"
-                }
-                _record_to_mailbox(fallback_res)
-                logger.warning(f"Delivery fallback: Email to {to_email} captured to local mailbox directory.")
-                return fallback_res
-
-        # 3. Development / Testing Mailbox mode
+        # Development Mailbox mode (explicitly enabled)
         if settings.EMAIL_TEST_MODE:
             settings.ensure_directories()
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
             sanitized_email = to_email.replace("@", "_at_").replace(".", "_")
             file_base = f"{timestamp}_{sanitized_email}_{email_type}"
-            
             data_file = settings.MAILBOX_DIR / f"{file_base}.json"
             html_file = settings.MAILBOX_DIR / f"{file_base}.html"
-            
             payload = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "recipient": to_email,
@@ -1065,29 +1145,72 @@ The Drift Detector – Architecture Quality Team
                 "subject": subject,
                 "action_url": action_url,
                 "token": token,
-                "note": "Development/Testing mode email capture. In production, configure Brevo API or SMTP settings."
+                "note": "Development mailbox mode enabled via EMAIL_TEST_MODE=true."
             }
-            
             with open(data_file, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
-                
             with open(html_file, "w", encoding="utf-8") as f:
                 f.write(html_content)
-                
             logger.info(f"[DEV MAILBOX] Auth email saved to {data_file}")
             return {
                 "delivered": True,
+                "status": "test_mode",
                 "method": "development_mailbox",
                 "recipient": to_email,
                 "mailbox_file": str(data_file),
                 "action_url": action_url,
+                "token": token,
                 "message": f"Development mode: Email captured to dev mailbox ({data_file.name})"
             }
 
-        raise RuntimeError(
-            "Neither Brevo API nor SMTP is configured and EMAIL_TEST_MODE is disabled. "
-            "Please configure BREVO_API_KEY or SMTP credentials."
+        provider_errors = []
+
+        # 1. Attempt Brevo REST API v3
+        if cls.is_brevo_configured():
+            api_res = cls._send_via_brevo_api(
+                to_email=to_email,
+                subject=subject,
+                text_content=text_content,
+                html_content=html_content
+            )
+            if api_res.get("delivered"):
+                _record_to_mailbox(api_res)
+                return api_res
+            provider_errors.append(api_res.get("error", "Brevo API delivery failed"))
+
+        # 2. Attempt SMTP Delivery (Brevo SMTP relay or custom SMTP)
+        if cls.is_smtp_configured():
+            smtp_res = cls._send_via_smtp(
+                to_email=to_email,
+                subject=subject,
+                text_content=text_content,
+                html_content=html_content
+            )
+            if smtp_res.get("delivered"):
+                _record_to_mailbox(smtp_res)
+                return smtp_res
+            provider_errors.append(smtp_res.get("error", "SMTP delivery failed"))
+
+        # Both attempts failed (or neither was configured)
+        combined_error = " | ".join(provider_errors) if provider_errors else (
+            "Neither Brevo API nor SMTP is configured. Please configure BREVO_API_KEY or SMTP credentials in .env, "
+            "or set EMAIL_TEST_MODE=true for offline development."
         )
+
+        failed_res = {
+            "delivered": False,
+            "status": "failed",
+            "method": "failed",
+            "recipient": to_email,
+            "error": combined_error,
+            "action_url": action_url,
+            "token": token,
+            "message": f"Live email delivery failed: {combined_error}"
+        }
+        # Still record to mailbox so token is not lost for recovery
+        _record_to_mailbox(failed_res)
+        logger.error(f"Live email delivery failed for {to_email}: {combined_error}")
+        return failed_res
 
     @classmethod
     def get_latest_dev_email(cls, email: Optional[str] = None, email_type: Optional[str] = None) -> Optional[Dict[str, Any]]:

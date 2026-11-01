@@ -13,7 +13,23 @@ import {
   MessageResponse,
 } from '../types';
 
-const API_BASE = '/api/v1';
+export function getApiBaseUrl(): string {
+  const envApiUrl = (import.meta as any)?.env?.VITE_API_URL || (import.meta as any)?.env?.VITE_API_BASE_URL;
+  if (envApiUrl && typeof envApiUrl === 'string' && envApiUrl.trim()) {
+    const cleaned = envApiUrl.trim().replace(/\/+$/, '');
+    return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+  }
+
+  const envBackendUrl = (import.meta as any)?.env?.VITE_BACKEND_URL;
+  if (envBackendUrl && typeof envBackendUrl === 'string' && envBackendUrl.trim()) {
+    return `${envBackendUrl.trim().replace(/\/+$/, '')}/api/v1`;
+  }
+
+  return '/api/v1';
+}
+
+export const API_BASE = getApiBaseUrl();
+
 const SESSION_TOKEN_KEY = 'drift_session_token';
 
 export function getStoredSessionToken(): string | null {
@@ -43,7 +59,8 @@ export interface ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${endpoint}`;
+  const base = getApiBaseUrl();
+  const url = `${base}${endpoint}`;
 
   // Assemble headers with dual authentication: HttpOnly cookie + Bearer token
   const headers: Record<string, string> = {
@@ -57,15 +74,27 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers['X-Session-Token'] = token;
   }
 
-  const response = await fetch(url, {
-    credentials: 'include',
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      credentials: 'include',
+      ...options,
+      headers,
+    });
+  } catch (networkErr: any) {
+    throw new Error(
+      `Unable to reach backend service at ${base}. Please ensure the server is active on http://127.0.0.1:8000.`
+    );
+  }
 
   if (!response.ok) {
-    let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
-    if (response.status === 502) {
+    let errorMessage = `API request failed: ${response.status} ${response.statusText}`.trim();
+
+    if (response.status === 405) {
+      errorMessage = `Method Not Allowed (405): The API endpoint at '${url}' does not allow HTTP ${options.method || 'GET'}. If accessing from a static host like GitHub Pages, configure VITE_API_URL or run the backend locally using start_servers.bat.`;
+    } else if (response.status === 404) {
+      errorMessage = `API endpoint not found (404): '${url}'. Please verify that the backend API route exists.`;
+    } else if (response.status === 502) {
       errorMessage = 'Backend service is unavailable (502 Bad Gateway). Please verify that the server is running on http://127.0.0.1:8000.';
     } else if (response.status === 503) {
       errorMessage = 'Service temporarily unavailable (503). Please try again shortly.';
@@ -78,14 +107,18 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       if (errorJson.detail) {
         if (typeof errorJson.detail === 'string') {
           errorMessage = errorJson.detail;
-        } else if (errorJson.detail.errors) {
+        } else if (Array.isArray(errorJson.detail)) {
+          errorMessage = errorJson.detail.map((d: any) => d.msg || JSON.stringify(d)).join(', ');
+        } else if (errorJson.detail.errors && Array.isArray(errorJson.detail.errors)) {
           errorMessage = errorJson.detail.errors.join(', ');
         } else {
           errorMessage = JSON.stringify(errorJson.detail);
         }
+      } else if (errorJson.message) {
+        errorMessage = errorJson.message;
       }
     } catch {
-      // Ignore JSON parse error and retain user-friendly error message
+      // Retain the informative errorMessage if response is HTML (e.g. 405 static page) or plain text
     }
 
     // Handle 401 Unauthorized globally for protected resources

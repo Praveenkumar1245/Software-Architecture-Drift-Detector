@@ -57,6 +57,7 @@ class Settings:
     SMTP_FROM_EMAIL: str = os.getenv("SMTP_FROM_EMAIL", "pirajan20012009@gmail.com")
     SMTP_FROM_NAME: str = os.getenv("SMTP_FROM_NAME", "Software Architecture Drift Detector")
     SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1")
+    SMTP_USE_SSL: bool = os.getenv("SMTP_USE_SSL", "false").lower() in ("true", "1")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     EMAIL_TEST_MODE: bool = os.getenv("EMAIL_TEST_MODE", "true").lower() in ("true", "1")
     
@@ -64,9 +65,14 @@ class Settings:
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://praveenkumar1245.github.io",
     ]
+    if os.getenv("FRONTEND_URL") and os.getenv("FRONTEND_URL") not in CORS_ORIGINS:
+        CORS_ORIGINS.append(os.getenv("FRONTEND_URL"))
     
     # Optional AI
     AI_ENABLED: bool = os.getenv("AI_ENABLED", "false").lower() in ("true", "1")

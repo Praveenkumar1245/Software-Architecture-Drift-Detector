@@ -50,13 +50,13 @@ describe('Software Architecture Drift Detector UI & Auth Workflow', () => {
       </AuthProvider>
     );
 
-    expect(screen.getByText('Create Enterprise Account')).toBeDefined();
+    expect(screen.getByRole('heading', { name: /create account/i })).toBeDefined();
     expect(screen.getByPlaceholderText('Praveen Kumar')).toBeDefined();
     expect(screen.getByPlaceholderText('architect@enterprise.com')).toBeDefined();
     expect(screen.getByPlaceholderText('Minimum 8 characters')).toBeDefined();
     expect(screen.getByPlaceholderText('Re-enter password')).toBeDefined();
     expect(screen.getByText(/minimum 8 characters required/i)).toBeDefined();
-    expect(screen.getByRole('button', { name: /create account/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /sign up/i })).toBeDefined();
   });
 
   it('renders persistent sidebar navigation with all 9 core routes', () => {

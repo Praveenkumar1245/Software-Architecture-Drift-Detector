@@ -5,8 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+os.environ["EMAIL_TEST_MODE"] = "true"
 
 from fastapi.testclient import TestClient
+from backend.app.core.config import settings
+settings.EMAIL_TEST_MODE = True
 from backend.app.main import app
 from backend.app.core.database import SessionLocal
 from backend.app.models.user import User, EmailOTP

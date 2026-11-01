@@ -113,7 +113,14 @@ class AuthService:
 
         # Dispatch 6-digit OTP email
         email_result = EmailService.send_signup_otp_email(user.email, raw_otp, user.full_name)
-        
+        if not email_result.get("delivered", False) and not settings.EMAIL_TEST_MODE:
+            err_msg = email_result.get("error") or email_result.get("message") or "Email provider rejected delivery."
+            logger.error(f"Failed to deliver signup OTP to {user.email}: {err_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Email delivery failed: {err_msg}"
+            )
+
         return user, email_result
 
     @classmethod
@@ -273,8 +280,22 @@ class AuthService:
         db.commit()
 
         email_result = EmailService.send_signup_otp_email(user.email, raw_otp, user.full_name)
+        if not email_result.get("delivered", False) and not settings.EMAIL_TEST_MODE:
+            err_msg = email_result.get("error") or email_result.get("message") or "Email provider rejected delivery."
+            logger.error(f"Failed to resend signup OTP to {user.email}: {err_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Email delivery failed: {err_msg}"
+            )
+
+        delivery_method = email_result.get("method")
+        msg = (
+            "A fresh 6-digit verification code has been dispatched to your email."
+            if delivery_method != "development_mailbox"
+            else "A fresh 6-digit verification code was generated (Development Mailbox Mode)."
+        )
         return {
-            "message": "A fresh 6-digit verification code has been sent to your email.",
+            "message": msg,
             "email_sent": email_result.get("delivered", False),
             "detail": email_result.get("message")
         }
@@ -343,8 +364,22 @@ class AuthService:
         db.commit()
 
         email_result = EmailService.send_password_reset_otp_email(user.email, raw_otp, user.full_name)
+        if not email_result.get("delivered", False) and not settings.EMAIL_TEST_MODE:
+            err_msg = email_result.get("error") or email_result.get("message") or "Email provider rejected delivery."
+            logger.error(f"Failed to deliver password reset OTP to {user.email}: {err_msg}")
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Email delivery failed: {err_msg}"
+            )
+
+        delivery_method = email_result.get("method")
+        msg = (
+            generic_response["message"]
+            if delivery_method != "development_mailbox"
+            else "Password reset code generated (Development Mailbox Mode: saved to data/mailbox/)."
+        )
         return {
-            "message": generic_response["message"],
+            "message": msg,
             "email_sent": email_result.get("delivered", False),
             "detail": email_result.get("message")
         }

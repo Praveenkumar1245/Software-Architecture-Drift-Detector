@@ -36,7 +36,9 @@ logger = logging.getLogger("drift_detector.api.auth")
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post("/register/", status_code=status.HTTP_201_CREATED)
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
+@router.post("/signup/", status_code=status.HTTP_201_CREATED)
 def register(
     data: UserRegister,
     db: Session = Depends(get_db)
@@ -50,9 +52,12 @@ def register(
     dev_action_url = None
     if email_result.get("method") == "development_mailbox":
         dev_action_url = email_result.get("action_url")
+        msg = "Account created. (Development Mailbox Mode: verification OTP saved to data/mailbox/)."
+    else:
+        msg = "Account created. A 6-digit verification code has been sent to your email."
 
     return {
-        "message": "Account created. A 6-digit verification code has been sent to your email.",
+        "message": msg,
         "user_id": user.id,
         "email": user.email,
         "email_delivery": email_result.get("method"),
@@ -60,6 +65,7 @@ def register(
     }
 
 @router.post("/verify-signup-otp", response_model=MessageResponse)
+@router.post("/verify-signup-otp/", response_model=MessageResponse)
 def verify_signup_otp(
     data: VerifySignupOTPRequest,
     db: Session = Depends(get_db)
@@ -73,6 +79,7 @@ def verify_signup_otp(
     return MessageResponse(message=res["message"])
 
 @router.post("/resend-signup-otp", response_model=MessageResponse)
+@router.post("/resend-signup-otp/", response_model=MessageResponse)
 def resend_signup_otp(
     data: ResendSignupOTPRequest,
     db: Session = Depends(get_db)
@@ -88,6 +95,7 @@ def resend_signup_otp(
     )
 
 @router.post("/verify-email", response_model=MessageResponse)
+@router.post("/verify-email/", response_model=MessageResponse)
 def verify_email_post(
     data: EmailVerifyRequest,
     db: Session = Depends(get_db)
@@ -102,6 +110,7 @@ def verify_email_post(
     )
 
 @router.get("/verify-email", response_model=MessageResponse)
+@router.get("/verify-email/", response_model=MessageResponse)
 def verify_email_get(
     token: str,
     db: Session = Depends(get_db)
@@ -115,6 +124,7 @@ def verify_email_get(
     )
 
 @router.post("/resend-verification", response_model=MessageResponse)
+@router.post("/resend-verification/", response_model=MessageResponse)
 def resend_verification(
     data: ResendVerificationRequest,
     db: Session = Depends(get_db)
@@ -130,6 +140,7 @@ def resend_verification(
     )
 
 @router.post("/login")
+@router.post("/login/")
 def login(
     credentials: UserLogin,
     request: Request,
@@ -187,7 +198,20 @@ def login(
             detail="An error occurred while processing your authentication request."
         )
 
+@router.get("/login")
+@router.get("/login/")
+def login_get_help():
+    """
+    Informative endpoint for GET /login to provide actionable error response
+    if inspected or called with GET method.
+    """
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="The login route requires an HTTP POST request with a JSON payload containing 'email' and 'password'."
+    )
+
 @router.post("/logout", response_model=MessageResponse)
+@router.post("/logout/", response_model=MessageResponse)
 def logout(
     request: Request,
     response: Response,
@@ -207,6 +231,7 @@ def logout(
     return MessageResponse(message="Signed out successfully")
 
 @router.get("/me", response_model=UserResponse)
+@router.get("/me/", response_model=UserResponse)
 def get_current_user_profile(
     current_user: User = Depends(get_current_user)
 ):
@@ -216,6 +241,7 @@ def get_current_user_profile(
     return current_user
 
 @router.get("/status", response_model=AuthStatusResponse)
+@router.get("/status/", response_model=AuthStatusResponse)
 def get_auth_status(
     current_user: Optional[User] = Depends(get_current_user_optional)
 ):
@@ -230,6 +256,7 @@ def get_auth_status(
     return AuthStatusResponse(authenticated=False, user=None)
 
 @router.post("/forgot-password", response_model=MessageResponse)
+@router.post("/forgot-password/", response_model=MessageResponse)
 def forgot_password(
     data: PasswordResetRequest,
     db: Session = Depends(get_db)
@@ -246,6 +273,7 @@ def forgot_password(
     )
 
 @router.post("/verify-reset-otp", response_model=VerifyResetOTPResponse)
+@router.post("/verify-reset-otp/", response_model=VerifyResetOTPResponse)
 def verify_reset_otp(
     data: VerifyResetOTPRequest,
     db: Session = Depends(get_db)
@@ -262,6 +290,7 @@ def verify_reset_otp(
     )
 
 @router.post("/resend-reset-otp", response_model=MessageResponse)
+@router.post("/resend-reset-otp/", response_model=MessageResponse)
 def resend_reset_otp(
     data: ResendResetOTPRequest,
     db: Session = Depends(get_db)
@@ -277,6 +306,7 @@ def resend_reset_otp(
     )
 
 @router.post("/reset-password", response_model=MessageResponse)
+@router.post("/reset-password/", response_model=MessageResponse)
 def reset_password(
     data: PasswordResetConfirm,
     db: Session = Depends(get_db)
