@@ -396,6 +396,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     });
   } catch {
     const base = getApiBaseUrl();
+    if (isStaticProductionHost()) {
+      throw new Error(
+        `Unable to reach backend service at ${base || targetUrl}. The cloud backend on Render has not been activated or is starting up. To test immediately with your local database, switch to http://localhost:5173/ or activate your Render web service at https://dashboard.render.com.`
+      );
+    }
     throw new Error(
       `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
     );
