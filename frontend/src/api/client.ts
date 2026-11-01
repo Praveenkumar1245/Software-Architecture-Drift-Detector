@@ -268,8 +268,13 @@ export function getApiBaseUrl(): string {
     return '/api/v1';
   }
 
-  // 5. On static production hosts (GitHub Pages) with no configured backend:
-  // Return empty string to prevent relative /api/v1 calls resolving to GitHub Pages static host
+  // 5. Default production backend for GitHub Pages deployment:
+  // Points to the production Render FastAPI backend declared in render.yaml
+  const defaultProductionBackend = 'https://software-architecture-drift-detector.onrender.com/api/v1';
+  if (isAllowedBackendOrigin(defaultProductionBackend)) {
+    return defaultProductionBackend;
+  }
+
   return '';
 }
 
