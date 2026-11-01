@@ -15,6 +15,12 @@ import {
 
 export const CUSTOM_API_URL_STORAGE_KEY = 'drift_custom_api_url';
 
+export function isStaticProductionHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname.toLowerCase();
+  return host.endsWith('github.io') || (host !== 'localhost' && host !== '127.0.0.1' && !host.startsWith('192.168.') && !host.startsWith('10.'));
+}
+
 export function getCustomApiUrl(): string | null {
   if (typeof window === 'undefined') return null;
   try {
@@ -75,8 +81,15 @@ export function getApiBaseUrl(): string {
     return `${envBackendUrl.trim().replace(/\/+$/, '')}/api/v1`;
   }
 
-  // 4. Default relative /api/v1 for local development
-  return '/api/v1';
+  // 4. In development on localhost, use relative '/api/v1' proxied by Vite to http://127.0.0.1:8000
+  if (!isStaticProductionHost()) {
+    return '/api/v1';
+  }
+
+  // 5. On static production hosts (GitHub Pages) with no configured backend:
+  // Do NOT return relative '/api/v1' because relative calls on GitHub Pages resolve to
+  // https://<username>.github.io/api/v1 which Fastly rejects with 405 Method Not Allowed!
+  return '';
 }
 
 export const API_BASE = getApiBaseUrl();
@@ -111,6 +124,13 @@ export interface ApiError extends Error {
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const base = getApiBaseUrl();
+
+  if (isStaticProductionHost() && !base) {
+    throw new Error(
+      'Backend Not Connected: This website is hosted statically on GitHub Pages, which cannot execute the Python FastAPI backend. To log in or run scans, please deploy the backend to a cloud host (such as Render or Railway) and configure VITE_API_URL, or enter your backend URL in "Configure Backend API Server" below. For local testing, run start_servers.bat and open http://localhost:5173.'
+    );
+  }
+
   const url = `${base}${endpoint}`;
 
   // Assemble headers with dual authentication: HttpOnly cookie + Bearer token
