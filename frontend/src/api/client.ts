@@ -103,19 +103,59 @@ export function isAllowedBackendOrigin(urlStr: string): boolean {
       return true;
     }
 
-    // If frontend and backend share the exact same host (e.g. containerized monolith on approved host)
-    if (
-      typeof window !== 'undefined' &&
-      !isStaticProductionHost() &&
-      hostname === window.location.hostname.toLowerCase()
-    ) {
-      return true;
-    }
-
     return false;
   } catch {
     return false;
   }
+}
+
+/**
+ * Resolves a request endpoint against the configured API base URL and strictly validates
+ * the final URL origin before any request is dispatched or authentication tokens are attached.
+ * 
+ * - Rejects protocol-relative URLs (e.g. //attacker.com, //attacker.com/api/v1).
+ * - Resolves safe relative paths against the base URL or window.location.origin.
+ * - Enforces that the resolved origin is an approved backend origin.
+ */
+export function buildAndValidateTargetUrl(endpoint: string, base?: string): string {
+  if (!endpoint || typeof endpoint !== 'string') {
+    throw new Error('Security Error: Target endpoint must be a valid non-empty string.');
+  }
+
+  const trimmedEndpoint = endpoint.trim();
+
+  // Reject protocol-relative URLs and slash evasion
+  if (
+    trimmedEndpoint.startsWith('//') ||
+    trimmedEndpoint.startsWith('/\\') ||
+    trimmedEndpoint.startsWith('\\\\') ||
+    trimmedEndpoint.startsWith('\\/')
+  ) {
+    throw new Error(`Security Error: Protocol-relative URLs are forbidden ('${endpoint}').`);
+  }
+
+  const apiBase = base !== undefined ? base : getApiBaseUrl();
+
+  let targetUrl: string;
+  if (trimmedEndpoint.startsWith('http://') || trimmedEndpoint.startsWith('https://')) {
+    targetUrl = trimmedEndpoint;
+  } else {
+    if (!apiBase) {
+      throw new Error(
+        'Backend connection required: No backend API server is configured. Please deploy the FastAPI backend and configure its URL in "Configure Backend API Server".'
+      );
+    }
+    const cleanBase = apiBase.replace(/\/+$/, '');
+    const cleanPath = trimmedEndpoint.startsWith('/') ? trimmedEndpoint : `/${trimmedEndpoint}`;
+    targetUrl = `${cleanBase}${cleanPath}`;
+  }
+
+  // Validate the final request URL origin before proceeding
+  if (!isAllowedBackendOrigin(targetUrl)) {
+    throw new Error(`Security Error: Destination URL '${targetUrl}' is not an approved backend origin.`);
+  }
+
+  return targetUrl;
 }
 
 /**
@@ -326,19 +366,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     return handleDevDemoOnly<T>(endpoint, options);
   }
 
-  const base = getApiBaseUrl();
-
-  if (!base) {
-    throw new Error(
-      'Backend connection required: No backend API server is configured. Please deploy the FastAPI backend and configure its URL in "Configure Backend API Server".'
-    );
-  }
-
-  const url = `${base}${endpoint}`;
-
-  if (!isAllowedBackendOrigin(url)) {
-    throw new Error(`Security Error: Destination URL '${url}' is not an approved backend origin.`);
-  }
+  // Resolve and validate final target URL origin before dispatching or attaching credentials
+  const targetUrl = buildAndValidateTargetUrl(endpoint);
 
   // Assemble headers with dual authentication: HttpOnly cookie + Bearer token
   const headers: Record<string, string> = {
@@ -347,21 +376,23 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   };
 
   const token = getStoredSessionToken();
-  if (token && isAllowedBackendOrigin(url) && !headers['Authorization']) {
+  // Strictly validate final target URL origin before attaching Authorization or session token headers
+  if (token && isAllowedBackendOrigin(targetUrl) && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${token}`;
     headers['X-Session-Token'] = token;
   }
 
   let response: Response;
   try {
-    response = await fetch(url, {
+    response = await fetch(targetUrl, {
       credentials: 'include',
       ...options,
       headers,
     });
   } catch {
+    const base = getApiBaseUrl();
     throw new Error(
-      `Unable to reach backend service at ${base}. Please ensure the server is running and accessible.`
+      `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
     );
   }
 
@@ -369,9 +400,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     let errorMessage = `API request failed: ${response.status} ${response.statusText}`.trim();
 
     if (response.status === 405) {
-      errorMessage = `Method Not Allowed (405): The API endpoint at '${url}' does not allow HTTP ${options.method || 'GET'}.`;
+      errorMessage = `Method Not Allowed (405): The API endpoint at '${targetUrl}' does not allow HTTP ${options.method || 'GET'}.`;
     } else if (response.status === 404) {
-      errorMessage = `API endpoint not found (404): '${url}'. Please verify that the backend API route exists.`;
+      errorMessage = `API endpoint not found (404): '${targetUrl}'. Please verify that the backend API route exists.`;
     } else if (response.status === 502) {
       errorMessage = 'Backend service is unavailable (502 Bad Gateway). Please verify that the server is running.';
     } else if (response.status === 503) {
@@ -538,26 +569,19 @@ export const api = {
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
   uploadProjectZip: async (projectId: string, file: File): Promise<{ message: string; repository_path: string }> => {
-    const base = getApiBaseUrl();
-    if (!base) {
-      throw new Error('Backend connection required: Cannot upload archive without an active backend connection.');
-    }
-    const url = `${base}/projects/${projectId}/upload`;
-    if (!isAllowedBackendOrigin(url)) {
-      throw new Error('Security Error: Untrusted backend origin for archive upload.');
-    }
+    const targetUrl = buildAndValidateTargetUrl(`/projects/${encodeURIComponent(projectId)}/upload`);
 
     const formData = new FormData();
     formData.append('file', file);
 
     const headers: Record<string, string> = {};
     const token = getStoredSessionToken();
-    if (token && isAllowedBackendOrigin(url)) {
+    if (token && isAllowedBackendOrigin(targetUrl)) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
     }
 
-    const res = await fetch(url, {
+    const res = await fetch(targetUrl, {
       method: 'POST',
       credentials: 'include',
       headers,
@@ -634,41 +658,25 @@ export const api = {
     const query = projectId ? `?project_id=${projectId}` : '';
     return request<OverviewMetrics>(`/overview${query}`);
   },
-  getJsonReportUrl: (scanId: string) => {
-    const base = getApiBaseUrl();
-    if (!base || !isAllowedBackendOrigin(base)) throw new Error('Untrusted or unconfigured backend API origin.');
-    return `${base}/scans/${scanId}/report/json`;
-  },
-  getCsvReportUrl: (scanId: string) => {
-    const base = getApiBaseUrl();
-    if (!base || !isAllowedBackendOrigin(base)) throw new Error('Untrusted or unconfigured backend API origin.');
-    return `${base}/scans/${scanId}/report/csv`;
-  },
-  getPdfReportUrl: (scanId: string) => {
-    const base = getApiBaseUrl();
-    if (!base || !isAllowedBackendOrigin(base)) throw new Error('Untrusted or unconfigured backend API origin.');
-    return `${base}/scans/${scanId}/report/pdf`;
-  },
+  getJsonReportUrl: (scanId: string) =>
+    buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/json`),
+  getCsvReportUrl: (scanId: string) =>
+    buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/csv`),
+  getPdfReportUrl: (scanId: string) =>
+    buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`),
   downloadCsvReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    const base = getApiBaseUrl();
-    if (!base) {
-      throw new Error('Backend connection required: Cannot download CSV report without an active backend connection.');
-    }
-    const url = `${base}/scans/${scanId}/report/csv`;
-    if (!isAllowedBackendOrigin(url)) {
-      throw new Error('Security Error: Attempted to download CSV report from an untrusted backend origin.');
-    }
+    const targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/csv`);
 
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
       'Accept': 'text/csv',
     };
-    if (token && isAllowedBackendOrigin(url)) {
+    if (token && isAllowedBackendOrigin(targetUrl)) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
     }
 
-    const response = await fetch(url, {
+    const response = await fetch(targetUrl, {
       method: 'GET',
       credentials: 'include',
       headers,
@@ -726,25 +734,18 @@ export const api = {
     }, 150);
   },
   downloadPdfReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    const base = getApiBaseUrl();
-    if (!base) {
-      throw new Error('Backend connection required: Cannot download PDF report without an active backend connection.');
-    }
-    const url = `${base}/scans/${scanId}/report/pdf`;
-    if (!isAllowedBackendOrigin(url)) {
-      throw new Error('Security Error: Attempted to download PDF report from an untrusted backend origin.');
-    }
+    const targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`);
 
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
       'Accept': 'application/pdf',
     };
-    if (token && isAllowedBackendOrigin(url)) {
+    if (token && isAllowedBackendOrigin(targetUrl)) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
     }
 
-    const response = await fetch(url, {
+    const response = await fetch(targetUrl, {
       method: 'GET',
       credentials: 'include',
       headers,

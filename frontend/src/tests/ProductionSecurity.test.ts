@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   api,
   isAllowedBackendOrigin,
+  buildAndValidateTargetUrl,
   setCustomApiUrl,
   getApiBaseUrl,
   getStoredSessionToken,
@@ -207,6 +208,27 @@ describe('Production Readiness & Security Hardening Audit', () => {
       base = getApiBaseUrl();
       expect(base).not.toContain('unapproved-domain.com');
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
+    });
+
+    it('buildAndValidateTargetUrl strictly throws for //attacker.com and protocol-relative variations', () => {
+      expect(() => buildAndValidateTargetUrl('//attacker.com')).toThrow(/Protocol-relative URLs are forbidden/i);
+      expect(() => buildAndValidateTargetUrl('//attacker.com/api/v1')).toThrow(/Protocol-relative URLs are forbidden/i);
+      expect(() => buildAndValidateTargetUrl('//example.com')).toThrow(/Protocol-relative URLs are forbidden/i);
+      expect(() => buildAndValidateTargetUrl('/\\attacker.com')).toThrow(/Protocol-relative URLs are forbidden/i);
+      expect(() => buildAndValidateTargetUrl('\\\\attacker.com')).toThrow(/Protocol-relative URLs are forbidden/i);
+    });
+
+    it('buildAndValidateTargetUrl strictly throws for untrusted remote hosts', () => {
+      expect(() => buildAndValidateTargetUrl('https://unapproved-domain.com/api/v1')).toThrow(/Security Error.*not an approved backend origin/i);
+      expect(() => buildAndValidateTargetUrl('http://unapproved-domain.com/api/v1')).toThrow(/Security Error.*not an approved backend origin/i);
+      expect(() => buildAndValidateTargetUrl('https://attacker.com/api/v1')).toThrow(/Security Error.*not an approved backend origin/i);
+    });
+
+    it('buildAndValidateTargetUrl succeeds for safe relative paths and approved HTTPS origins', () => {
+      const approvedBase = 'https://software-architecture-drift-detector.onrender.com/api/v1';
+      const target = buildAndValidateTargetUrl('/projects', approvedBase);
+      expect(target).toBe('https://software-architecture-drift-detector.onrender.com/api/v1/projects');
+      expect(isAllowedBackendOrigin(target)).toBe(true);
     });
   });
 

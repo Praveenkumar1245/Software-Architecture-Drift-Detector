@@ -1,3 +1,4 @@
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
 import pytest
@@ -153,4 +154,30 @@ def test_dev_mailbox_blocked_when_test_mode_disabled(client: TestClient):
         assert "disabled in production" in res.json()["detail"].lower()
     finally:
         settings.EMAIL_TEST_MODE = orig
+
+def test_email_delivery_failure_raises_error_in_production_mode(client: TestClient, monkeypatch):
+    """When EMAIL_TEST_MODE is False and real delivery fails or is unconfigured, return 502 error and never claim success falsely."""
+    from backend.app.core.config import settings
+    orig = settings.EMAIL_TEST_MODE
+    orig_pytest = os.environ.get("PYTEST_CURRENT_TEST")
+    try:
+        settings.EMAIL_TEST_MODE = False
+        # Unset pytest env var temporarily so email service does not treat this as a unit test mock
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        
+        # Ensure SMTP and Brevo are unconfigured
+        monkeypatch.setattr(settings, "SMTP_HOST", "")
+        monkeypatch.setattr(settings, "BREVO_API_KEY", "")
+        
+        email = f"prod_failure_{uuid.uuid4().hex[:6]}@enterprise.com"
+        res = client.post("/api/v1/auth/register", json={
+            "email": email,
+            "password": "ValidPassword123!"
+        })
+        assert res.status_code == 502
+        assert "Email delivery failed" in res.json()["detail"]
+    finally:
+        settings.EMAIL_TEST_MODE = orig
+        if orig_pytest:
+            os.environ["PYTEST_CURRENT_TEST"] = orig_pytest
 
