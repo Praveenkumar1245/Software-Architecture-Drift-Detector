@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ShieldCheck, Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { api } from '../api/client';
+import { api, getApiBaseUrl, setCustomApiUrl, getCustomApiUrl } from '../api/client';
 
 export const LoginPage: React.FC = () => {
   const { login, sessionExpiredNotice, clearSessionExpiredNotice } = useAuth();
@@ -18,6 +18,19 @@ export const LoginPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [resendStatus, setResendStatus] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
+
+  const [showApiConfig, setShowApiConfig] = useState(false);
+  const [customApiInput, setCustomApiInput] = useState(() => getCustomApiUrl() || '');
+  const [apiSaveSuccess, setApiSaveSuccess] = useState(false);
+
+  const handleSaveApiUrl = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCustomApiUrl(customApiInput.trim() || null);
+    setApiSaveSuccess(true);
+    setTimeout(() => {
+      window.location.reload();
+    }, 500);
+  };
 
   // Check if redirected from a protected page
   const from = (location.state as any)?.from?.pathname || '/';
@@ -213,6 +226,43 @@ export const LoginPage: React.FC = () => {
             <Link to="/verify-email" className="text-[#475569] hover:text-[#0F172A] hover:underline">
               Verify token manually
             </Link>
+          </div>
+
+          {/* Optional Backend API Endpoint Configuration for Static Hosting */}
+          <div className="w-full pt-1 text-center">
+            <button
+              type="button"
+              onClick={() => setShowApiConfig(!showApiConfig)}
+              className="text-[11px] text-[#526078] hover:text-[#172B4D] hover:underline cursor-pointer"
+            >
+              {showApiConfig ? 'Hide API Connection Settings' : 'Configure Backend API Server'}
+            </button>
+            {showApiConfig && (
+              <div className="mt-2.5 p-3 rounded-lg bg-[#F5F7FA] border border-[#D8E2EE] text-left space-y-2">
+                <div className="text-[11px] text-[#475569]">
+                  <span className="font-semibold text-[#0F172A]">Current Endpoint:</span>{' '}
+                  <code className="text-[#0A2548] font-mono break-all">{getApiBaseUrl()}</code>
+                </div>
+                <div className="text-[11px] text-[#64748B]">
+                  For static hosts like GitHub Pages, enter your deployed FastAPI URL (or tunnel URL) to communicate with your backend.
+                </div>
+                <form onSubmit={handleSaveApiUrl} className="flex gap-2">
+                  <input
+                    type="url"
+                    value={customApiInput}
+                    onChange={(e) => setCustomApiInput(e.target.value)}
+                    placeholder="https://api.yourdomain.com"
+                    className="flex-1 px-2.5 py-1.5 text-xs bg-white border border-[#D8E2EE] rounded focus:outline-none focus:border-[#00D4C7] font-mono"
+                  />
+                  <button
+                    type="submit"
+                    className="px-3 py-1.5 text-xs font-semibold bg-[#03162D] text-white rounded hover:bg-[#0A2548] transition-colors cursor-pointer"
+                  >
+                    {apiSaveSuccess ? 'Saved!' : 'Save & Reload'}
+                  </button>
+                </form>
+              </div>
+            )}
           </div>
         </div>
       </div>

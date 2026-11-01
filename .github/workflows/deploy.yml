@@ -70,6 +70,7 @@ jobs:
         working-directory: ./frontend
         env:
           VITE_BASE_PATH: /Software-Architecture-Drift-Detector/
+          VITE_API_URL: ${{ vars.VITE_API_URL || secrets.VITE_API_URL || '' }}
         run: npm run build
 
       - name: Verify build artifacts and index.html

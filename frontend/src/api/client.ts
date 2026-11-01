@@ -13,7 +13,57 @@ import {
   MessageResponse,
 } from '../types';
 
+export const CUSTOM_API_URL_STORAGE_KEY = 'drift_custom_api_url';
+
+export function getCustomApiUrl(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setCustomApiUrl(url: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (url && url.trim()) {
+      const cleaned = url.trim().replace(/\/+$/, '');
+      const finalUrl = cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+      localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, finalUrl);
+    } else {
+      localStorage.removeItem(CUSTOM_API_URL_STORAGE_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
 export function getApiBaseUrl(): string {
+  // 1. Runtime URL parameter: ?api=https://... or ?backend=https://...
+  if (typeof window !== 'undefined') {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const queryApi = params.get('api') || params.get('backend');
+      if (queryApi && queryApi.trim()) {
+        const cleaned = queryApi.trim().replace(/\/+$/, '');
+        const finalUrl = cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+        localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, finalUrl);
+        return finalUrl;
+      }
+
+      // 2. Stored custom API endpoint
+      const stored = localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY);
+      if (stored && stored.trim()) {
+        const cleaned = stored.trim().replace(/\/+$/, '');
+        return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+      }
+    } catch {
+      // Ignore storage restrictions
+    }
+  }
+
+  // 3. Build-time Vite environment variables
   const envApiUrl = (import.meta as any)?.env?.VITE_API_URL || (import.meta as any)?.env?.VITE_API_BASE_URL;
   if (envApiUrl && typeof envApiUrl === 'string' && envApiUrl.trim()) {
     const cleaned = envApiUrl.trim().replace(/\/+$/, '');
@@ -25,6 +75,7 @@ export function getApiBaseUrl(): string {
     return `${envBackendUrl.trim().replace(/\/+$/, '')}/api/v1`;
   }
 
+  // 4. Default relative /api/v1 for local development
   return '/api/v1';
 }
 
