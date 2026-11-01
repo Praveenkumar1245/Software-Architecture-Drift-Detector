@@ -210,3 +210,79 @@ def test_user_scan_and_report_access_isolation(client: TestClient):
     assert client.get(f"/api/v1/scans/{scan_id}/report/pdf", headers=user_b["headers"]).status_code == 404
     assert client.get(f"/api/v1/scans/{scan_id}/findings", headers=user_b["headers"]).status_code == 404
 
+
+
+def test_health_and_readiness_endpoints(client: TestClient):
+    """Health and readiness probes return 200 with operational database status."""
+    res_health = client.get("/health")
+    assert res_health.status_code == 200
+    assert res_health.json()["status"] in ("healthy", "degraded")
+    assert res_health.json()["database"] == "healthy"
+
+    res_ready = client.get("/ready")
+    assert res_ready.status_code == 200
+    assert res_ready.json()["status"] == "ready"
+    assert res_ready.json()["database"] == "connected"
+
+    res_v1_ready = client.get("/api/v1/ready")
+    assert res_v1_ready.status_code == 200
+    assert res_v1_ready.json()["status"] == "ready"
+
+
+def test_database_connection_helper():
+    """Verify check_db_connection() helper confirms database availability."""
+    from backend.app.core.database import check_db_connection
+    is_connected, msg = check_db_connection()
+    assert is_connected is True
+    assert "operational" in msg.lower()
+
+
+def test_circular_dependency_detection(client: TestClient):
+    """Circular imports between modules (A -> B -> A) are accurately identified."""
+    user = register_and_login_user(client)
+
+    proj = client.post(
+        "/api/v1/projects",
+        json={"name": "Circular Dependency Project", "primary_language": "python"},
+        headers=user["headers"]
+    ).json()
+    proj_id = proj["id"]
+
+    # Create zip with cycle: mod_a imports mod_b, mod_b imports mod_a
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("cycle_pkg/__init__.py", "")
+        zf.writestr("cycle_pkg/mod_a.py", "import cycle_pkg.mod_b\nclass A:\n    pass\n")
+        zf.writestr("cycle_pkg/mod_b.py", "import cycle_pkg.mod_a\nclass B:\n    pass\n")
+    buf.seek(0)
+
+    client.post(
+        f"/api/v1/projects/{proj_id}/upload-zip",
+        files={"file": ("circular.zip", buf.getvalue(), "application/zip")},
+        headers=user["headers"]
+    )
+
+    arch_json = """{
+      "name": "Cycle Rules",
+      "version": 1,
+      "components": [
+        {"name": "cycle_pkg", "layer": 1, "path_patterns": ["cycle_pkg/**"], "allowed_dependencies": [], "forbidden_dependencies": []}
+      ],
+      "rules": [
+        {"id": "CIRC-1", "type": "circular_dependency", "description": "No cyclic module imports", "severity": "critical"}
+      ]
+    }"""
+    client.post(
+        "/api/v1/architectures",
+        json={"project_id": proj_id, "name": "Cycle Arch", "format": "json", "raw_content": arch_json, "is_active": True},
+        headers=user["headers"]
+    )
+
+    scan_res = client.post("/api/v1/scans", json={"project_id": proj_id}, headers=user["headers"])
+    assert scan_res.status_code == 201
+    scan = scan_res.json()
+    assert scan["total_findings"] >= 1
+    assert scan["critical_findings"] >= 1
+
+    findings = client.get(f"/api/v1/scans/{scan['id']}/findings", headers=user["headers"]).json()
+    assert any(f["rule_type"] == "circular_dependency" for f in findings)

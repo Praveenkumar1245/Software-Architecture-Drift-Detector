@@ -80,6 +80,29 @@ class DriftDetectionEngine:
         # 9. Check Architectural Decision Violations (ADR)
         self._check_adr_violations(raw_deps)
 
+        # Deduplicate findings by rule, target, and location
+        seen_keys = set()
+        deduped_findings: List[FindingDraft] = []
+        for f in self.findings:
+            key = (
+                f.rule_id,
+                f.file_path,
+                f.line_number,
+                f.source_module,
+                f.target_module,
+                f.source_component,
+                f.target_component,
+                f.title
+            )
+            if key not in seen_keys:
+                seen_keys.add(key)
+                deduped_findings.append(f)
+        self.findings = deduped_findings
+
+        # If zero findings detected, compliance is 100.0%
+        if not self.findings:
+            return [], 100.0
+
         # Compute compliance percentage: 100 * (1 - violated_rules / total_rules)
         violated_count = len(self.violated_rule_ids)
         compliance = max(0.0, min(100.0, 100.0 * (1.0 - (violated_count / self.total_applicable_rules))))

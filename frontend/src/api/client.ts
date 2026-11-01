@@ -495,8 +495,9 @@ export const api = {
       note?: string;
     }>('/auth/dev/mailbox/latest'),
 
-  // Health
+  // Health & Readiness
   getHealth: () => request<{ status: string; database: string; version: string; storage?: string }>('/health'),
+  getReady: () => request<{ status: string; database: string; version: string }>('/ready'),
 
   // Projects
   getProjects: () => request<Project[]>('/projects'),

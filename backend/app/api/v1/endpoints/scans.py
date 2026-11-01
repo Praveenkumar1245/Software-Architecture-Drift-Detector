@@ -79,4 +79,9 @@ def compare_scans(
     if not scan_a:
         raise HTTPException(status_code=404, detail="Scan A not found")
     verify_user_project(db, scan_a.project_id, current_user.id)
+
+    scan_b = db.query(ScanRun).filter(ScanRun.id == scan_b_id).first()
+    if not scan_b:
+        raise HTTPException(status_code=404, detail="Scan B not found")
+    verify_user_project(db, scan_b.project_id, current_user.id)
     return ScanService.compare_scans(db, scan_a_id, scan_b_id)

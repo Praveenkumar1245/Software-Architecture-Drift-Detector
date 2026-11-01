@@ -34,3 +34,17 @@ def health_check(db: Session = Depends(get_db)):
         "version": settings.VERSION,
         "project": settings.PROJECT_NAME
     }
+
+@router.get("/ready", tags=["Health"])
+def readiness_check(db: Session = Depends(get_db)):
+    """Readiness probe endpoint to verify database connectivity before serving traffic."""
+    try:
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "ready",
+            "database": "connected",
+            "version": settings.VERSION
+        }
+    except Exception as e:
+        logger.error(f"Readiness probe failed: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Database connectivity is not ready.")

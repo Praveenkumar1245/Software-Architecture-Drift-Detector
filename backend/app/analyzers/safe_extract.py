@@ -1,12 +1,15 @@
 import os
 import zipfile
 import shutil
+import stat
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 from backend.app.core.config import settings
 
 class SafeExtractionError(Exception):
     pass
+
+MAX_TOTAL_UNCOMPRESSED_BYTES = 200 * 1024 * 1024  # 200MB uncompressed limit
 
 def sanitize_and_extract_zip(zip_path: Path, target_dir: Path) -> List[Path]:
     """
@@ -14,39 +17,53 @@ def sanitize_and_extract_zip(zip_path: Path, target_dir: Path) -> List[Path]:
     - Path traversal attacks (Zip Slip)
     - Extraction outside target_dir
     - Excessive file count (Zip bombs)
-    - File size limits
+    - Decompression bombs (uncompressed size limit)
+    - Symlinks and malicious archive attributes
+    - Archive file size limits
     """
     if not zip_path.exists():
-        raise SafeExtractionError("Archive file does not exist")
+        raise SafeExtractionError("Archive file does not exist.")
 
     file_size = zip_path.stat().st_size
     if file_size > settings.MAX_UPLOAD_SIZE_BYTES:
-        raise SafeExtractionError(f"Archive exceeds maximum allowed size ({settings.MAX_UPLOAD_SIZE_BYTES} bytes)")
+        raise SafeExtractionError(f"Archive exceeds maximum allowed size ({settings.MAX_UPLOAD_SIZE_BYTES} bytes).")
 
     # Clean target directory if exists
     if target_dir.exists():
         shutil.rmtree(target_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_dir_abs = os.path.abspath(target_dir)
+    target_dir_abs = os.path.abspath(str(target_dir))
 
     extracted_files: List[Path] = []
+    total_uncompressed_size = 0
 
     try:
         with zipfile.ZipFile(zip_path, 'r') as archive:
             infolist = archive.infolist()
             if len(infolist) > settings.MAX_EXTRACTED_FILES:
-                raise SafeExtractionError(f"Archive contains too many files ({len(infolist)} > {settings.MAX_EXTRACTED_FILES})")
+                raise SafeExtractionError(f"Archive contains too many files ({len(infolist)} > {settings.MAX_EXTRACTED_FILES}).")
 
             for member in infolist:
-                # Security checks
+                # Reject symlinks
+                mode = member.external_attr >> 16
+                if stat.S_ISLNK(mode):
+                    raise SafeExtractionError(f"Symbolic links in archives are strictly forbidden: {member.filename}")
+
+                # Accumulate uncompressed size check (anti-decompression bomb)
+                total_uncompressed_size += member.file_size
+                if total_uncompressed_size > MAX_TOTAL_UNCOMPRESSED_BYTES:
+                    raise SafeExtractionError(
+                        f"Extracted content exceeds maximum allowed size ({MAX_TOTAL_UNCOMPRESSED_BYTES // (1024*1024)} MB)."
+                    )
+
+                # Prevent path traversal patterns
                 filename = member.filename
-                # Prevent traversal patterns
                 if ".." in filename or filename.startswith("/") or filename.startswith("\\"):
                     raise SafeExtractionError(f"Unsafe path detected in archive: {filename}")
 
                 resolved_path = os.path.abspath(os.path.join(target_dir_abs, filename))
-                
-                # Check that resolved path is strictly within target_dir
+
+                # Verify resolved path is strictly inside target directory
                 try:
                     common = os.path.commonpath([target_dir_abs, resolved_path])
                     if common != target_dir_abs:
@@ -63,7 +80,7 @@ def sanitize_and_extract_zip(zip_path: Path, target_dir: Path) -> List[Path]:
                     extracted_files.append(Path(resolved_path))
 
     except zipfile.BadZipFile:
-        raise SafeExtractionError("Corrupt or invalid ZIP archive")
+        raise SafeExtractionError("Corrupt or invalid ZIP archive.")
     except Exception as e:
         if not isinstance(e, SafeExtractionError):
             raise SafeExtractionError(f"Extraction failed: {str(e)}")
