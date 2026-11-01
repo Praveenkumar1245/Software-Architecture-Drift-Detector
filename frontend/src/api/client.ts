@@ -15,6 +15,43 @@ import {
 
 export const CUSTOM_API_URL_STORAGE_KEY = 'drift_custom_api_url';
 
+export function isAllowedBackendOrigin(urlStr: string): boolean {
+  if (!urlStr || typeof urlStr !== 'string') return false;
+  const trimmed = urlStr.trim();
+  if (trimmed.startsWith('/')) return true;
+
+  try {
+    const baseOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:5173';
+    const parsed = new URL(trimmed, baseOrigin);
+    const hostname = parsed.hostname.toLowerCase();
+    const protocol = parsed.protocol.toLowerCase();
+
+    // In local development, permit loopback over http or https
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') {
+      return protocol === 'http:' || protocol === 'https:';
+    }
+
+    // In production environments, strictly enforce HTTPS
+    if (protocol !== 'https:') {
+      return false;
+    }
+
+    // Explicitly approved backend deployment domains and same origin
+    if (
+      hostname.endsWith('.onrender.com') ||
+      hostname.endsWith('.railway.app') ||
+      hostname.endsWith('.fly.dev') ||
+      (typeof window !== 'undefined' && hostname === window.location.hostname.toLowerCase())
+    ) {
+      return true;
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function isStaticProductionHost(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname.toLowerCase();
@@ -24,7 +61,11 @@ export function isStaticProductionHost(): boolean {
 export function getCustomApiUrl(): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    return localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY);
+    const stored = localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY);
+    if (stored && isAllowedBackendOrigin(stored)) {
+      return stored;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -35,6 +76,9 @@ export function setCustomApiUrl(url: string | null): void {
   try {
     if (url && url.trim()) {
       const cleaned = url.trim().replace(/\/+$/, '');
+      if (!isAllowedBackendOrigin(cleaned)) {
+        throw new Error('Invalid backend URL: must be an HTTPS URL on an approved domain (*.onrender.com, *.railway.app, *.fly.dev) or localhost.');
+      }
       const finalUrl = cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
       localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, finalUrl);
     } else {
@@ -53,16 +97,24 @@ export function getApiBaseUrl(): string {
       const queryApi = params.get('api') || params.get('backend');
       if (queryApi && queryApi.trim()) {
         const cleaned = queryApi.trim().replace(/\/+$/, '');
-        const finalUrl = cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
-        localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, finalUrl);
-        return finalUrl;
+        if (isAllowedBackendOrigin(cleaned)) {
+          const finalUrl = cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+          localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, finalUrl);
+          return finalUrl;
+        } else {
+          console.warn('[Security] Ignored unapproved backend URL query parameter:', cleaned);
+        }
       }
 
       // 2. Stored custom API endpoint
       const stored = localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY);
       if (stored && stored.trim()) {
         const cleaned = stored.trim().replace(/\/+$/, '');
-        return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+        if (isAllowedBackendOrigin(cleaned)) {
+          return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+        } else {
+          localStorage.removeItem(CUSTOM_API_URL_STORAGE_KEY);
+        }
       }
     } catch {
       // Ignore storage restrictions
@@ -73,12 +125,17 @@ export function getApiBaseUrl(): string {
   const envApiUrl = (import.meta as any)?.env?.VITE_API_URL || (import.meta as any)?.env?.VITE_API_BASE_URL;
   if (envApiUrl && typeof envApiUrl === 'string' && envApiUrl.trim()) {
     const cleaned = envApiUrl.trim().replace(/\/+$/, '');
-    return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+    if (isAllowedBackendOrigin(cleaned)) {
+      return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+    }
   }
 
   const envBackendUrl = (import.meta as any)?.env?.VITE_BACKEND_URL;
   if (envBackendUrl && typeof envBackendUrl === 'string' && envBackendUrl.trim()) {
-    return `${envBackendUrl.trim().replace(/\/+$/, '')}/api/v1`;
+    const cleaned = envBackendUrl.trim().replace(/\/+$/, '');
+    if (isAllowedBackendOrigin(cleaned)) {
+      return `${cleaned}/api/v1`;
+    }
   }
 
   // 4. In development on localhost, use relative '/api/v1' proxied by Vite to http://127.0.0.1:8000
@@ -941,7 +998,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   };
 
   const token = getStoredSessionToken();
-  if (token && !headers['Authorization']) {
+  if (token && isAllowedBackendOrigin(url) && !headers['Authorization']) {
     headers['Authorization'] = `Bearer ${token}`;
     headers['X-Session-Token'] = token;
   }
@@ -1152,7 +1209,7 @@ export const api = {
 
     const headers: Record<string, string> = {};
     const token = getStoredSessionToken();
-    if (token) {
+    if (token && isAllowedBackendOrigin(base)) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
     }
@@ -1261,7 +1318,7 @@ export const api = {
     const headers: Record<string, string> = {
       'Accept': 'text/csv',
     };
-    if (token) {
+    if (token && isAllowedBackendOrigin(url)) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
     }
@@ -1346,7 +1403,7 @@ export const api = {
     const headers: Record<string, string> = {
       'Accept': 'application/pdf',
     };
-    if (token) {
+    if (token && isAllowedBackendOrigin(url)) {
       headers['Authorization'] = `Bearer ${token}`;
       headers['X-Session-Token'] = token;
     }

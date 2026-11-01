@@ -142,3 +142,15 @@ def test_forgot_password_and_reset_flow(client: TestClient):
     assert new_login.status_code == 200
     assert new_login.json()["user"]["email"] == email
 
+def test_dev_mailbox_blocked_when_test_mode_disabled(client: TestClient):
+    """Dev mailbox endpoint must return 403 Forbidden when EMAIL_TEST_MODE is disabled."""
+    from backend.app.core.config import settings
+    orig = settings.EMAIL_TEST_MODE
+    try:
+        settings.EMAIL_TEST_MODE = False
+        res = client.get("/api/v1/auth/dev/mailbox/latest")
+        assert res.status_code == 403
+        assert "disabled in production" in res.json()["detail"].lower()
+    finally:
+        settings.EMAIL_TEST_MODE = orig
+

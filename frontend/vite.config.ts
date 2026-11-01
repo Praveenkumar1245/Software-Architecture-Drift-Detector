@@ -9,6 +9,27 @@ export default defineConfig(({ command, mode }) => {
   return {
     base: process.env.VITE_BASE_PATH || (isProduction ? '/Software-Architecture-Drift-Detector/' : '/'),
     plugins: [react(), tailwindcss()],
+    build: {
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('@xyflow')) {
+                return 'vendor-flow';
+              }
+              if (id.includes('recharts') || id.includes('d3') || id.includes('victory')) {
+                return 'vendor-charts';
+              }
+              if (id.includes('lucide-react')) {
+                return 'vendor-icons';
+              }
+              return 'vendor-core';
+            }
+          }
+        }
+      }
+    },
     test: {
       environment: 'jsdom',
       globals: true,

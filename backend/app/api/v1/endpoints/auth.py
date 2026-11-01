@@ -335,10 +335,24 @@ def reset_password(
     )
 
 @router.get("/dev/mailbox/latest")
-def get_latest_dev_email():
+def get_latest_dev_email(request: Request):
     """
     Development helper to inspect the latest captured verification or reset email.
+    Blocked in production mode and restricted to local development / test environments.
     """
+    if not settings.EMAIL_TEST_MODE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Development mailbox endpoint is strictly disabled in production mode."
+        )
+
+    client_ip = request.client.host if request.client else None
+    if client_ip not in ("127.0.0.1", "localhost", "::1", "testclient"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to development mailbox is restricted to local development testing."
+        )
+
     email_data = EmailService.get_latest_dev_email()
     if not email_data:
         raise HTTPException(status_code=404, detail="No emails found in mailbox.")
