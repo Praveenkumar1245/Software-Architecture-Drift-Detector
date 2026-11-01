@@ -117,7 +117,7 @@ class ProjectService:
         return True
 
     @staticmethod
-    def handle_zip_upload(db: Session, project_id: str, file: UploadFile) -> str:
+    def handle_zip_upload(db: Session, project_id: str, file: UploadFile) -> dict:
         project = ProjectService.get_by_id(db, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
@@ -147,10 +147,14 @@ class ProjectService:
         if not extracted_files:
             raise HTTPException(status_code=400, detail="Uploaded archive is empty. Please provide a ZIP containing source files.")
 
-        # Update project record
+        # Update project record with sanitized path
+        clean_rel_path = f"data/projects/{project_id}/source"
         project.repository_type = "local_zip"
-        project.repository_path = str(source_target_dir)
+        project.repository_path = clean_rel_path
         db.commit()
         db.refresh(project)
 
-        return str(source_target_dir)
+        return {
+            "repository_path": clean_rel_path,
+            "files_count": len(extracted_files)
+        }

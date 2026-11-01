@@ -82,8 +82,9 @@ def upload_project_zip(
     proj = ProjectService.get_by_id(db, project_id, user_id=current_user.id)
     if not proj:
         raise HTTPException(status_code=404, detail="Project not found")
-    extracted_path = ProjectService.handle_zip_upload(db, project_id, file)
+    res = ProjectService.handle_zip_upload(db, project_id, file)
     return {
-        "message": "Project archive uploaded and extracted successfully",
-        "repository_path": extracted_path
+        "message": f"Project archive uploaded and extracted successfully ({res['files_count']} files discovered).",
+        "repository_path": res["repository_path"],
+        "files_count": res["files_count"]
     }

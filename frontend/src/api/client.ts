@@ -13,15 +13,12 @@ import {
   MessageResponse,
 } from '../types';
 import { isDevDemoActive, handleDevDemoRequest } from './devDemo';
-import {
-  isGitHubPagesHost,
-  handleStaticShowcaseRequest,
-  downloadShowcaseCsv,
-  downloadShowcasePdf,
-} from './staticShowcase';
 
 export const CUSTOM_API_URL_STORAGE_KEY = 'drift_custom_api_url';
 const SESSION_TOKEN_KEY = 'drift_session_token';
+
+// Standard server unavailable error message
+export const SERVER_UNAVAILABLE_MESSAGE = 'Backend server is currently unavailable. Please try again later.';
 
 // Approved default production backend deployment origin
 export const DEFAULT_CONFIGURED_BACKEND = 'https://software-architecture-drift-detector.onrender.com';
@@ -151,9 +148,7 @@ export function buildAndValidateTargetUrl(endpoint: string, base?: string): stri
     targetUrl = trimmedEndpoint;
   } else {
     if (!apiBase) {
-      throw new Error(
-        'Backend connection required: No backend API server is configured. Please deploy the FastAPI backend and configure its URL in "Configure Backend API Server".'
-      );
+      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
     }
     const cleanBase = apiBase.replace(/\/+$/, '');
     const cleanPath = trimmedEndpoint.startsWith('/') ? trimmedEndpoint : `/${trimmedEndpoint}`;
@@ -307,15 +302,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   // Resolve and validate final target URL origin before dispatching or attaching credentials
-  let targetUrl: string;
-  try {
-    targetUrl = buildAndValidateTargetUrl(endpoint);
-  } catch (err) {
-    if (isGitHubPagesHost()) {
-      return handleStaticShowcaseRequest<T>(endpoint, options);
-    }
-    throw err;
-  }
+  const targetUrl = buildAndValidateTargetUrl(endpoint);
 
   // Assemble headers with dual authentication: HttpOnly cookie + Bearer token
   const headers: Record<string, string> = {
@@ -338,24 +325,18 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       headers,
     });
   } catch {
-    if (isGitHubPagesHost()) {
-      return handleStaticShowcaseRequest<T>(endpoint, options);
-    }
-    const base = getApiBaseUrl();
-    throw new Error(
-      `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
-    );
+    throw new Error(SERVER_UNAVAILABLE_MESSAGE);
   }
 
   if (!response.ok) {
-    if ((response.status === 404 || response.status === 502 || response.status === 503) && isGitHubPagesHost()) {
-      return handleStaticShowcaseRequest<T>(endpoint, options);
+    if (response.status === 502 || response.status === 503 || response.status === 504) {
+      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
     }
 
     let errorMessage = `API request failed: ${response.status} ${response.statusText}`.trim();
 
     if (response.status === 400) {
-      errorMessage = `Bad Request (400): The server could not process the request.`;
+      errorMessage = 'Bad Request (400): The server could not process the request.';
     } else if (response.status === 401) {
       errorMessage = 'Authentication required or session expired (401).';
     } else if (response.status === 403) {
@@ -368,12 +349,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       errorMessage = 'Validation error (422): Submitted data did not pass backend verification schema.';
     } else if (response.status === 500) {
       errorMessage = 'Internal server error (500). Please check backend logs.';
-    } else if (response.status === 502) {
-      errorMessage = 'Backend service is unavailable (502 Bad Gateway). Please verify that the server is running.';
-    } else if (response.status === 503) {
-      errorMessage = 'Service temporarily unavailable (503). Please try again shortly.';
-    } else if (response.status === 504) {
-      errorMessage = 'Gateway timeout (504). The server took too long to respond.';
     }
 
     try {
@@ -533,16 +508,15 @@ export const api = {
   deleteProject: (id: string) =>
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
-  uploadProjectZip: async (projectId: string, file: File): Promise<{ message: string; repository_path: string }> => {
-    let targetUrl: string;
-    try {
-      targetUrl = buildAndValidateTargetUrl(`/projects/${encodeURIComponent(projectId)}/upload`);
-    } catch (err) {
-      if (isGitHubPagesHost()) {
-        return { message: 'Project code archive processed successfully (showcase sandbox)', repository_path: `uploads/${file.name}` };
-      }
-      throw err;
+  uploadProjectZip: async (projectId: string, file: File): Promise<{ message: string; repository_path: string; files_count?: number }> => {
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+      throw new Error('Only .zip files are supported.');
     }
+    if (file.size > 50 * 1024 * 1024) {
+      throw new Error('ZIP archive exceeds the maximum allowed size of 50 MB.');
+    }
+
+    const targetUrl = buildAndValidateTargetUrl(`/projects/${encodeURIComponent(projectId)}/upload`);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -563,18 +537,12 @@ export const api = {
         body: formData,
       });
     } catch {
-      if (isGitHubPagesHost()) {
-        return { message: 'Project code archive processed successfully (showcase sandbox)', repository_path: `uploads/${file.name}` };
-      }
-      const base = getApiBaseUrl();
-      throw new Error(
-        `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
-      );
+      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
     }
 
     if (!res.ok) {
-      if ((res.status === 404 || res.status === 502 || res.status === 503) && isGitHubPagesHost()) {
-        return { message: 'Project code archive processed successfully (showcase sandbox)', repository_path: `uploads/${file.name}` };
+      if (res.status === 502 || res.status === 503 || res.status === 504) {
+        throw new Error(SERVER_UNAVAILABLE_MESSAGE);
       }
       let errorMessage = `Upload failed (${res.status} ${res.statusText})`;
       try {
@@ -653,16 +621,7 @@ export const api = {
   getPdfReportUrl: (scanId: string) =>
     buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`),
   downloadCsvReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    let targetUrl: string;
-    try {
-      targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/csv`);
-    } catch (err) {
-      if (isGitHubPagesHost()) {
-        downloadShowcaseCsv(scanId, customFilename);
-        return;
-      }
-      throw err;
-    }
+    const targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/csv`);
 
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
@@ -681,20 +640,12 @@ export const api = {
         headers,
       });
     } catch {
-      if (isGitHubPagesHost()) {
-        downloadShowcaseCsv(scanId, customFilename);
-        return;
-      }
-      const base = getApiBaseUrl();
-      throw new Error(
-        `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
-      );
+      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
     }
 
     if (!response.ok) {
-      if ((response.status === 404 || response.status === 502 || response.status === 503) && isGitHubPagesHost()) {
-        downloadShowcaseCsv(scanId, customFilename);
-        return;
+      if (response.status === 502 || response.status === 503 || response.status === 504) {
+        throw new Error(SERVER_UNAVAILABLE_MESSAGE);
       }
       let errorMessage = `Failed to download CSV (${response.status} ${response.statusText})`;
       try {
@@ -747,16 +698,7 @@ export const api = {
     }, 150);
   },
   downloadPdfReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    let targetUrl: string;
-    try {
-      targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`);
-    } catch (err) {
-      if (isGitHubPagesHost()) {
-        downloadShowcasePdf(scanId, customFilename);
-        return;
-      }
-      throw err;
-    }
+    const targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`);
 
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
@@ -775,20 +717,12 @@ export const api = {
         headers,
       });
     } catch {
-      if (isGitHubPagesHost()) {
-        downloadShowcasePdf(scanId, customFilename);
-        return;
-      }
-      const base = getApiBaseUrl();
-      throw new Error(
-        `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
-      );
+      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
     }
 
     if (!response.ok) {
-      if ((response.status === 404 || response.status === 502 || response.status === 503) && isGitHubPagesHost()) {
-        downloadShowcasePdf(scanId, customFilename);
-        return;
+      if (response.status === 502 || response.status === 503 || response.status === 504) {
+        throw new Error(SERVER_UNAVAILABLE_MESSAGE);
       }
       let errorMessage = `Failed to download PDF (${response.status} ${response.statusText})`;
       try {

@@ -9,6 +9,7 @@ import {
   setStoredSessionToken,
   CUSTOM_API_URL_STORAGE_KEY,
   DEFAULT_CONFIGURED_BACKEND,
+  SERVER_UNAVAILABLE_MESSAGE,
 } from '../api/client';
 
 describe('Production Readiness & Security Hardening Audit', () => {
@@ -24,14 +25,14 @@ describe('Production Readiness & Security Hardening Audit', () => {
     vi.restoreAllMocks();
   });
 
-  describe('1. Fake Login Prevention & Production Fallback Removal', () => {
-    it('strictly fails and throws when backend is offline, never authenticating locally or faking success', async () => {
+  describe('TASK 1 — Completely Remove Fake Production Fallback', () => {
+    it('strictly fails and throws standard unavailable error when backend is offline', async () => {
       // Mock fetch to simulate network failure (backend unreachable)
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
 
       await expect(
         api.login({ email: 'architect@enterprise.com', password: 'AnyPassword123!' })
-      ).rejects.toThrow(/Unable to reach backend service/i);
+      ).rejects.toThrow(SERVER_UNAVAILABLE_MESSAGE);
 
       // Verify NO session token or fake demo user was created
       expect(getStoredSessionToken()).toBeNull();
@@ -40,7 +41,7 @@ describe('Production Readiness & Security Hardening Audit', () => {
       expect(localStorage.getItem('drift_demo_user')).toBeNull();
     });
 
-    it('rejects login when backend returns 502 Bad Gateway and preserves the real error', async () => {
+    it('rejects login when backend returns 502 Bad Gateway and shows server unavailable message', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 502,
@@ -50,7 +51,7 @@ describe('Production Readiness & Security Hardening Audit', () => {
 
       await expect(
         api.login({ email: 'architect@enterprise.com', password: 'AnyPassword123!' })
-      ).rejects.toThrow(/502 Bad Gateway/i);
+      ).rejects.toThrow(SERVER_UNAVAILABLE_MESSAGE);
 
       expect(getStoredSessionToken()).toBeNull();
     });
@@ -70,38 +71,100 @@ describe('Production Readiness & Security Hardening Audit', () => {
       expect(getStoredSessionToken()).toBeNull();
     });
 
-    it('confirms handleStaticOffline production fallback is completely eliminated', () => {
-      // Verify no handleStaticOffline exists on client module exports
+    it('confirms handleStaticOffline and static showcase fallbacks are completely eliminated', () => {
       expect((api as any).handleStaticOffline).toBeUndefined();
+      expect((api as any).handleStaticShowcaseRequest).toBeUndefined();
     });
-  });
 
-  describe('2. Backend Unavailable Scenarios & Elimination of Fake Production Data', () => {
-    it('throws when getting projects with backend offline, never returning hardcoded sample project', async () => {
+    it('throws server unavailable message when getting projects with backend offline, never returning sample projects', async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Network Error'));
 
-      await expect(api.getProjects()).rejects.toThrow(/Unable to reach backend service/i);
+      await expect(api.getProjects()).rejects.toThrow(SERVER_UNAVAILABLE_MESSAGE);
 
       // Verify no fake project exists in storage
       expect(localStorage.getItem('drift_offline_projects')).toBeNull();
+      expect(localStorage.getItem('drift_showcase_projects')).toBeNull();
     });
 
-    it('throws when getting overview metrics with backend offline, never returning fake compliance scores', async () => {
+    it('throws server unavailable message when getting overview metrics with backend offline', async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Network Error'));
 
-      await expect(api.getOverview()).rejects.toThrow(/Unable to reach backend service/i);
+      await expect(api.getOverview()).rejects.toThrow(SERVER_UNAVAILABLE_MESSAGE);
+    });
+  });
+
+  describe('TASK 2 — Fix Actual ZIP Upload', () => {
+    it('validates file extension and rejects non-zip files before network dispatch', async () => {
+      const invalidFile = new File(['text'], 'app.tar.gz', { type: 'application/gzip' });
+      await expect(api.uploadProjectZip('proj-101', invalidFile)).rejects.toThrow(
+        'Only .zip files are supported.'
+      );
     });
 
-    it('refuses to upload archives when backend is unavailable, never faking extraction', async () => {
+    it('validates file size and rejects archives larger than 50MB before network dispatch', async () => {
+      const hugeFile = new File(['x'], 'huge.zip', { type: 'application/zip' });
+      Object.defineProperty(hugeFile, 'size', { value: 60 * 1024 * 1024 });
+
+      await expect(api.uploadProjectZip('proj-101', hugeFile)).rejects.toThrow(
+        'ZIP archive exceeds the maximum allowed size of 50 MB.'
+      );
+    });
+
+    it('executes real ZIP upload, sending FormData and returning backend repository path and files count', async () => {
+      setStoredSessionToken('auth-token-zip-1');
+
+      let sentBody: any = null;
+      let sentHeaders: any = null;
+      globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+        sentBody = init?.body;
+        sentHeaders = init?.headers;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({
+            message: 'Project archive uploaded and extracted successfully (8 files discovered).',
+            repository_path: 'data/projects/proj-101/source',
+            files_count: 8,
+          }),
+        });
+      });
+
+      const zipFile = new File(['fake zip binary content'], 'app.zip', { type: 'application/zip' });
+      const result = await api.uploadProjectZip('proj-101', zipFile);
+
+      expect(result.message).toContain('8 files discovered');
+      expect(result.repository_path).toBe('data/projects/proj-101/source');
+      expect(result.files_count).toBe(8);
+      expect(sentBody instanceof FormData).toBe(true);
+      expect(sentHeaders['Authorization']).toBe('Bearer auth-token-zip-1');
+    });
+
+    it('propagates real backend error when archive is empty or corrupt', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: () => Promise.resolve({ detail: 'Uploaded archive is empty. Please provide a ZIP containing source files.' }),
+      });
+
+      const emptyFile = new File(['empty'], 'empty.zip', { type: 'application/zip' });
+      await expect(api.uploadProjectZip('proj-empty', emptyFile)).rejects.toThrow(
+        'Uploaded archive is empty. Please provide a ZIP containing source files.'
+      );
+    });
+
+    it('throws server unavailable message when upload endpoint is offline', async () => {
       globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Network Error'));
       const dummyFile = new File(['dummy content'], 'project.zip', { type: 'application/zip' });
 
       await expect(
         api.uploadProjectZip('proj-test-123', dummyFile)
-      ).rejects.toThrow(/Unable to reach backend service/i);
+      ).rejects.toThrow(SERVER_UNAVAILABLE_MESSAGE);
     });
+  });
 
-    it('refuses to download CSV or PDF reports when backend returns 404 or 500, never returning fake templates', async () => {
+  describe('TASK 3 — Fix CSV, JSON and PDF Reports', () => {
+    it('refuses to download CSV or PDF reports when backend returns 404 or 500, never returning dummy content', async () => {
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 404,
@@ -112,9 +175,30 @@ describe('Production Readiness & Security Hardening Audit', () => {
       await expect(api.downloadCsvReport('scan-missing')).rejects.toThrow(/Scan report not found/i);
       await expect(api.downloadPdfReport('scan-missing')).rejects.toThrow(/Scan report not found/i);
     });
+
+    it('throws server unavailable message when report download service is offline', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+
+      await expect(api.downloadCsvReport('scan-1')).rejects.toThrow(SERVER_UNAVAILABLE_MESSAGE);
+      await expect(api.downloadPdfReport('scan-1')).rejects.toThrow(SERVER_UNAVAILABLE_MESSAGE);
+    });
+
+    it('downloads real CSV report from backend with UTF-8 BOM encoding', async () => {
+      const realCsv = 'Rule ID,Severity,Source Component,Target Component\nFORBIDDEN-IMPORT,critical,domain,presentation\n';
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve(realCsv),
+      });
+
+      const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(() => null as any);
+
+      await api.downloadCsvReport('scan-real-123', 'audit_report.csv');
+      expect(appendSpy).toHaveBeenCalled();
+    });
   });
 
-  describe('3. API URL Security, Origin Whitelist & Unapproved Subdomain Rejection', () => {
+  describe('TASK 4 — Improve Backend URL Security & Reject Unapproved Origins', () => {
     it('strictly rejects protocol-relative URLs: //example.com and //attacker.com/api/v1', () => {
       expect(isAllowedBackendOrigin('//example.com')).toBe(false);
       expect(isAllowedBackendOrigin('//attacker.com/api/v1')).toBe(false);
@@ -136,8 +220,7 @@ describe('Production Readiness & Security Hardening Audit', () => {
       expect(isAllowedBackendOrigin('https://attacker.com')).toBe(false);
     });
 
-    it('strictly rejects unapproved subdomains and enforces removal of wildcard trusts', () => {
-      // Unapproved subdomains on platforms must be rejected (no wildcard trust)
+    it('strictly rejects unapproved subdomains and enforces removal of broad wildcard trusts', () => {
       expect(isAllowedBackendOrigin('https://attacker.onrender.com')).toBe(false);
       expect(isAllowedBackendOrigin('https://evil-subdomain.onrender.com')).toBe(false);
       expect(isAllowedBackendOrigin('https://evil.railway.app')).toBe(false);
@@ -182,22 +265,18 @@ describe('Production Readiness & Security Hardening Audit', () => {
     });
 
     it('setCustomApiUrl rejects protocol-relative, unapproved subdomains, and malicious URLs', () => {
-      // Protocol-relative
       expect(() => setCustomApiUrl('//example.com')).toThrow(/Invalid backend URL/i);
       expect(() => setCustomApiUrl('//attacker.com/api/v1')).toThrow(/Invalid backend URL/i);
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
 
-      // Unapproved HTTPS domain
       expect(() => setCustomApiUrl('https://unapproved-domain.com')).toThrow(/Invalid backend URL/i);
       expect(() => setCustomApiUrl('https://attacker.onrender.com')).toThrow(/Invalid backend URL/i);
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
 
-      // Insecure plain HTTP on external host
       expect(() => setCustomApiUrl('http://unapproved-domain.com')).toThrow(/Invalid backend URL/i);
       expect(() => setCustomApiUrl('http://insecure-domain.org')).toThrow(/Invalid backend URL/i);
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
 
-      // Valid HTTPS approved host passes
       setCustomApiUrl(DEFAULT_CONFIGURED_BACKEND);
       expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBe(
         `${DEFAULT_CONFIGURED_BACKEND}/api/v1`
@@ -239,7 +318,7 @@ describe('Production Readiness & Security Hardening Audit', () => {
     });
   });
 
-  describe('4. Authentication Bearer Token Isolation & Real Request Processing', () => {
+  describe('TASK 5 & 6 — Authentication Bearer Token Protection & Real Scan Reliability', () => {
     it('attaches authorization headers only to approved backend origins', async () => {
       setStoredSessionToken('valid-production-jwt-token-999');
 
@@ -293,49 +372,6 @@ describe('Production Readiness & Security Hardening Audit', () => {
 
       await expect(api.getProjects()).rejects.toThrow('Token expired');
       expect(getStoredSessionToken()).toBeNull();
-    });
-  });
-
-  describe('5. Real ZIP Upload, Real Scan Execution & Export Reliability', () => {
-    it('executes real ZIP upload, sending FormData and returning backend repository path', async () => {
-      setStoredSessionToken('auth-token-zip-1');
-
-      let sentBody: any = null;
-      let sentHeaders: any = null;
-      globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
-        sentBody = init?.body;
-        sentHeaders = init?.headers;
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve({
-            message: 'Project archive uploaded and extracted successfully',
-            repository_path: 'backend/data/projects/proj-101/source',
-          }),
-        });
-      });
-
-      const zipFile = new File(['fake zip content'], 'app.zip', { type: 'application/zip' });
-      const result = await api.uploadProjectZip('proj-101', zipFile);
-
-      expect(result.message).toBe('Project archive uploaded and extracted successfully');
-      expect(result.repository_path).toBe('backend/data/projects/proj-101/source');
-      expect(sentBody instanceof FormData).toBe(true);
-      expect(sentHeaders['Authorization']).toBe('Bearer auth-token-zip-1');
-    });
-
-    it('propagates backend validation errors during ZIP upload', async () => {
-      globalThis.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 400,
-        statusText: 'Bad Request',
-        json: () => Promise.resolve({ detail: 'Uploaded archive is empty. Please provide a ZIP containing source files.' }),
-      });
-
-      const emptyFile = new File([], 'empty.zip', { type: 'application/zip' });
-      await expect(api.uploadProjectZip('proj-empty', emptyFile)).rejects.toThrow(
-        'Uploaded archive is empty. Please provide a ZIP containing source files.'
-      );
     });
 
     it('returns empty array when backend has zero findings, never injecting hardcoded violations', async () => {

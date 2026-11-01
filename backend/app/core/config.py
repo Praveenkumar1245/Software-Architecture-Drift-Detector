@@ -12,6 +12,7 @@ for env_candidate in [BASE_DIR.parent / ".env", BASE_DIR / ".env"]:
         break
 
 class Settings:
+    BASE_DIR: Path = BASE_DIR
     PROJECT_NAME: str = "Software Architecture Drift Detector"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"

@@ -24,6 +24,7 @@ from backend.app.analyzers.python_ast import analyze_python_source
 from backend.app.analyzers.graph_builder import ArchitectureGraph
 from backend.app.rules.engine import DriftDetectionEngine
 from backend.app.services.architecture_service import ArchitectureService
+from backend.app.core.config import settings
 
 class ScanService:
     @staticmethod
@@ -93,8 +94,16 @@ class ScanService:
                 detail=f"Invalid architecture definition structure: {str(e)}"
             )
 
-        # Validate source code directory exists
-        if not project.repository_path or not Path(project.repository_path).exists():
+        # Resolve source directory (support both absolute and relative storage paths)
+        source_dir = Path(project.repository_path) if project.repository_path else None
+        if source_dir and not source_dir.exists():
+            for base in [settings.BASE_DIR, settings.DATA_DIR, Path.cwd()]:
+                candidate = base / source_dir
+                if candidate.exists():
+                    source_dir = candidate
+                    break
+
+        if not source_dir or not source_dir.exists():
             raise HTTPException(
                 status_code=400,
                 detail="Project source code directory not found. Please upload project ZIP or configure source path."
@@ -115,7 +124,6 @@ class ScanService:
         start_time = time.time()
 
         try:
-            source_dir = Path(project.repository_path)
             source_dirs = [s.strip() for s in (project.source_dirs or "").split(",") if s.strip()]
             exclude_dirs = [e.strip() for e in (project.exclude_dirs or "").split(",") if e.strip()]
 
