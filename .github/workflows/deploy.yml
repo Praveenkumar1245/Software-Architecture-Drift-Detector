@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Ensure GitHub Pages build source is GitHub Actions
+        continue-on-error: true
         run: |
           response=$(curl -s -w "\n%{http_code}" -X PUT \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -51,6 +52,7 @@ jobs:
           fi
 
       - name: Cancel conflicting legacy pages-build-deployment runs
+        continue-on-error: true
         run: |
           runs=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
@@ -109,6 +111,7 @@ jobs:
           path: frontend/dist
 
       - name: Deploy to gh-pages branch (fallback)
+        continue-on-error: true
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

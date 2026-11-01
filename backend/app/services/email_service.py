@@ -135,8 +135,9 @@ class EmailService:
         Sends an email address verification message.
         Contains a secure link and an OTP / token for manual verification.
         """
-        verify_url = f"{settings.FRONTEND_URL.rstrip('/')}/verify-email?token={token}"
-        manual_url = f"{settings.FRONTEND_URL.rstrip('/')}/verify-email"
+        base_url = settings.get_frontend_action_base_url()
+        verify_url = f"{base_url}/verify-email?token={token}"
+        manual_url = f"{base_url}/verify-email"
         recipient_name = full_name or email.split('@')[0]
         
         subject = "Verify your email - Software Architecture Drift Detector"
@@ -322,8 +323,9 @@ The Software Architecture Drift Detector Team
         """
         Sends a password reset token link and code.
         """
-        reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?token={token}"
-        manual_url = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password"
+        base_url = settings.get_frontend_action_base_url()
+        reset_url = f"{base_url}/reset-password?token={token}"
+        manual_url = f"{base_url}/reset-password"
         recipient_name = full_name or email.split('@')[0]
         
         subject = "Reset your password - Software Architecture Drift Detector"

@@ -953,7 +953,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       ...options,
       headers,
     });
-  } catch (networkErr: any) {
+  } catch (_networkErr: any) {
     if (isStaticProductionHost()) {
       return handleStaticOffline<T>(endpoint, options);
     }

@@ -257,6 +257,8 @@ def get_auth_status(
 
 @router.post("/forgot-password", response_model=MessageResponse)
 @router.post("/forgot-password/", response_model=MessageResponse)
+@router.post("/forgot-password-otp", response_model=MessageResponse)
+@router.post("/forgot-password-otp/", response_model=MessageResponse)
 def forgot_password(
     data: PasswordResetRequest,
     db: Session = Depends(get_db)

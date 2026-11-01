@@ -71,6 +71,7 @@ def delete_project(
     return None
 
 @router.post("/{project_id}/upload")
+@router.post("/{project_id}/upload-zip")
 def upload_project_zip(
     project_id: str,
     file: UploadFile = File(...),

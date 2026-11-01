@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ShieldCheck, Mail, Lock, Eye, EyeOff, ArrowRight, CheckCircle2, AlertCircle, RefreshCw, Clock } from 'lucide-react';
 import { api } from '../api/client';
 
 export const ForgotPasswordPage: React.FC = () => {
-  const navigate = useNavigate();
 
   // Workflow steps: 'request_otp' | 'verify_otp' | 'set_new_password' | 'success'
   const [step, setStep] = useState<'request_otp' | 'verify_otp' | 'set_new_password' | 'success'>('request_otp');

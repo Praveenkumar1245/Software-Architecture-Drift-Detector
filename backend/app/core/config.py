@@ -72,10 +72,30 @@ class Settings:
         "http://127.0.0.1:4173",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://praveenkumar1245.github.io",
+        "https://tamilselvan3660.github.io",
     ]
-    if os.getenv("FRONTEND_URL") and os.getenv("FRONTEND_URL") not in CORS_ORIGINS:
-        CORS_ORIGINS.append(os.getenv("FRONTEND_URL"))
+    if os.getenv("FRONTEND_URL"):
+        fe_raw = os.getenv("FRONTEND_URL").strip().rstrip("/")
+        if fe_raw not in CORS_ORIGINS:
+            CORS_ORIGINS.append(fe_raw)
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(fe_raw)
+            if p.scheme and p.netloc:
+                origin = f"{p.scheme}://{p.netloc}"
+                if origin not in CORS_ORIGINS:
+                    CORS_ORIGINS.append(origin)
+        except Exception:
+            pass
+
+    def get_frontend_action_base_url(self) -> str:
+        """
+        Returns the full base URL for frontend navigation, handling GitHub Pages repository subpaths.
+        """
+        base = self.FRONTEND_URL.strip().rstrip("/")
+        if "github.io" in base and "Software-Architecture-Drift-Detector" not in base:
+            base = f"{base}/Software-Architecture-Drift-Detector"
+        return base
     
     # Optional AI
     AI_ENABLED: bool = os.getenv("AI_ENABLED", "false").lower() in ("true", "1")

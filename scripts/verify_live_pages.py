@@ -1,6 +1,6 @@
 import urllib.request
 
-url = 'https://praveenkumar1245.github.io/Software-Architecture-Drift-Detector/'
+url = 'https://tamilselvan3660.github.io/Software-Architecture-Drift-Detector/'
 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
 try:
     with urllib.request.urlopen(req) as resp:

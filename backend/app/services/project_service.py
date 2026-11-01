@@ -144,6 +144,9 @@ class ProjectService:
         except SafeExtractionError as see:
             raise HTTPException(status_code=400, detail=str(see))
 
+        if not extracted_files:
+            raise HTTPException(status_code=400, detail="Uploaded archive is empty. Please provide a ZIP containing source files.")
+
         # Update project record
         project.repository_type = "local_zip"
         project.repository_path = str(source_target_dir)

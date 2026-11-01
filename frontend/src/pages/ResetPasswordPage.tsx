@@ -11,7 +11,7 @@ export const ResetPasswordPage: React.FC = () => {
   const emailFromUrl = searchParams.get('email') || (location.state as any)?.email || '';
 
   const [token, setToken] = useState(tokenFromUrl);
-  const [email, setEmail] = useState(emailFromUrl);
+  const [email] = useState(emailFromUrl);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);

@@ -653,9 +653,6 @@ class AuthService:
             )
 
         is_valid_pwd = verify_password(credentials.password, user.password_hash)
-        if not is_valid_pwd and user.email == "architect@enterprise.com" and credentials.password in ("password123", "EnterprisePassword2026!"):
-            is_valid_pwd = True
-
         if not is_valid_pwd:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

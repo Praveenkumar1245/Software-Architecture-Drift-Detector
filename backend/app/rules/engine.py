@@ -122,6 +122,9 @@ class DriftDetectionEngine:
         for mod_name, comp_name in self.graph.module_to_component.items():
             if comp_name is None:
                 mod_info = modules.get(mod_name)
+                # Ignore empty __init__.py files that only serve as Python package markers
+                if mod_info and mod_info.file_path.endswith("__init__.py") and mod_info.classes_count == 0 and mod_info.functions_count == 0 and not mod_info.imports:
+                    continue
                 f_path = mod_info.file_path if mod_info else mod_name
                 self.violated_rule_ids.add(f"{rule_id}:{mod_name}")
                 self.findings.append(
@@ -281,6 +284,11 @@ class DriftDetectionEngine:
                 explanation = ""
 
                 if direction == "downward_only":
+                    # If target component is explicitly declared in source component's allowed_dependencies,
+                    # this explicit architectural allowance takes precedence over generic downward direction.
+                    if tgt_comp_name in src_comp.allowed_dependencies:
+                        continue
+
                     # Lower layer number = higher/outer layer (e.g. 1=Presentation, 2=Application, 3=Domain, 4=Infrastructure)
                     # If Domain (3) imports Presentation (1), src.layer (3) > tgt.layer (1) -> upward dependency violation!
                     if src_comp.layer > tgt_comp.layer:
