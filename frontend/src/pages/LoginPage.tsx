@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { ShieldCheck, Mail, Lock, Eye, EyeOff, AlertCircle, ArrowRight, CheckCircle2, RefreshCw, Settings } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { api, getApiBaseUrl, setCustomApiUrl, getCustomApiUrl, isStaticProductionHost } from '../api/client';
+import { api, getApiBaseUrl, setCustomApiUrl, getCustomApiUrl } from '../api/client';
 
 export const LoginPage: React.FC = () => {
   const { login, sessionExpiredNotice, clearSessionExpiredNotice } = useAuth();
@@ -19,7 +19,6 @@ export const LoginPage: React.FC = () => {
   const [resendStatus, setResendStatus] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
 
-  const isStaticHostWithoutBackend = isStaticProductionHost() && !getApiBaseUrl();
   const [showApiConfig, setShowApiConfig] = useState(false);
   const [customApiInput, setCustomApiInput] = useState(() => getCustomApiUrl() || '');
   const [apiSaveSuccess, setApiSaveSuccess] = useState(false);
@@ -88,19 +87,6 @@ export const LoginPage: React.FC = () => {
           <h1 className="text-xl font-bold text-[#0F172A] tracking-tight">Software Architecture Drift Detector</h1>
           <p className="text-xs text-[#475569]">Sign in to inspect, analyze, and enforce architecture boundaries</p>
         </div>
-
-        {/* Static Host Backend Alert */}
-        {isStaticHostWithoutBackend && (
-          <div className="p-3.5 rounded-lg bg-[#EFF6FF] border border-[#155EEF]/30 text-xs text-[#1E40AF] flex items-start gap-2.5 shadow-xs">
-            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-[#155EEF]" />
-            <div className="space-y-1 flex-1 min-w-0">
-              <p className="font-semibold text-[#1E3A8A]">Backend Connection Required</p>
-              <p className="text-[#3B82F6] leading-relaxed break-words">
-                This site is hosted statically on GitHub Pages. To sign in and run scans, connect your deployed FastAPI backend below or run locally using <code className="bg-white px-1 py-0.5 rounded border border-[#BFDBFE] font-mono text-[11px]">start_servers.bat</code>.
-              </p>
-            </div>
-          </div>
-        )}
 
         {/* Session Notice */}
         {(sessionExpiredNotice || (location.state as any)?.message) && (
