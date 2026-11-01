@@ -3,6 +3,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   FolderGit2,
   Plus,
+  CheckCircle2,
   Trash2,
   Upload,
   PlayCircle,
@@ -124,8 +125,11 @@ export const ProjectsPage: React.FC = () => {
           return (
             <div
               key={p.id}
-              className={`bg-white rounded-[10px] border p-6 flex flex-col justify-between transition-all ${
-                isActive ? 'border-[#009F95] ring-1 ring-[#009F95]/20' : 'border-[#D8E2EE] hover:border-[#CBD5E1]'
+              onClick={() => setActiveProject(p)}
+              className={`rounded-[12px] border-2 p-6 flex flex-col justify-between transition-all duration-200 cursor-pointer select-none ${
+                isActive
+                  ? 'bg-gradient-to-b from-[#F0FDF9] to-white border-[#009F95] shadow-md ring-2 ring-[#009F95]/30'
+                  : 'bg-white border-[#D8E2EE] hover:border-[#009F95]/60 hover:shadow-md hover:-translate-y-0.5 active:scale-[0.99]'
               }`}
             >
               <div>
@@ -141,9 +145,14 @@ export const ProjectsPage: React.FC = () => {
                       </span>
                     </div>
                   </div>
-                  {isActive && (
-                    <span className="px-2.5 py-0.5 rounded text-xs font-semibold bg-[#EFF6FF] text-[#175CD3] border border-[#BFDBFE]">
+                  {isActive ? (
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#009F95] text-white shadow-xs">
+                      <CheckCircle2 className="h-3.5 w-3.5" />
                       Active
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded text-xs font-semibold text-[#475569] bg-[#F8FAFC] border border-[#D8E2EE]">
+                      Tap to Select
                     </span>
                   )}
                 </div>
@@ -199,17 +208,30 @@ export const ProjectsPage: React.FC = () => {
               <div className="pt-4 border-t border-[#D8E2EE] flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => setActiveProject(p)}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors ${
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveProject(p);
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all ${
                       isActive
-                        ? 'bg-[#F8FAFC] text-[#475569] border border-[#D8E2EE] cursor-default'
-                        : 'bg-white border border-[#D8E2EE] text-[#0F172A] hover:bg-[#F8FAFC]'
+                        ? 'bg-[#009F95] text-white shadow-xs border border-[#009F95]'
+                        : 'bg-white border border-[#D8E2EE] text-[#0F172A] hover:bg-[#F0FDF9] hover:border-[#009F95] hover:text-[#009F95]'
                     }`}
                   >
-                    {isActive ? 'Selected' : 'Select'}
+                    {isActive ? (
+                      <>
+                        <CheckCircle2 className="h-3.5 w-3.5" />
+                        Selected
+                      </>
+                    ) : (
+                      'Select'
+                    )}
                   </button>
                   <button
-                    onClick={() => {
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setUploadingProjectId(p.id);
                       setError(null);
                     }}
@@ -222,7 +244,9 @@ export const ProjectsPage: React.FC = () => {
 
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => {
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setActiveProject(p);
                       navigate('/analyze');
                     }}
@@ -232,7 +256,11 @@ export const ProjectsPage: React.FC = () => {
                     <span>Scan</span>
                   </button>
                   <button
-                    onClick={() => handleDelete(p.id, p.name)}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete(p.id, p.name);
+                    }}
                     className="p-1.5 text-[#475569] hover:text-[#B42318] hover:bg-[#FEE2E2]/50 rounded-lg transition-colors"
                     title="Delete Project"
                   >

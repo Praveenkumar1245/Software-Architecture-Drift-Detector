@@ -262,6 +262,67 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
     } catch {}
   };
 
+  const getStoredOfflineScans = (projectId?: string): ScanRun[] => {
+    try {
+      const raw = localStorage.getItem('drift_offline_scans');
+      if (raw) {
+        const parsed: ScanRun[] = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          if (projectId) return parsed.filter((s) => s.project_id === projectId);
+          return parsed;
+        }
+      }
+    } catch {}
+
+    const defaultScan: ScanRun = {
+      id: 'scan-run-latest-001',
+      project_id: 'proj-ecommerce-drift',
+      architecture_id: 'arch-layered-001',
+      status: 'completed',
+      started_at: new Date(Date.now() - 3600000).toISOString(),
+      completed_at: new Date(Date.now() - 3550000).toISOString(),
+      duration_ms: 50420,
+      source_version: 'v1.4.2-audit',
+      files_analyzed: 14,
+      modules_discovered: 8,
+      dependencies_discovered: 12,
+      total_findings: 2,
+      critical_findings: 1,
+      high_findings: 1,
+      medium_findings: 0,
+      low_findings: 0,
+      compliance_percentage: 85.7,
+      created_at: new Date(Date.now() - 3600000).toISOString(),
+    };
+
+    try {
+      localStorage.setItem('drift_offline_scans', JSON.stringify([defaultScan]));
+    } catch {}
+
+    if (projectId && projectId !== 'proj-ecommerce-drift') return [];
+    return [defaultScan];
+  };
+
+  const saveStoredOfflineScan = (scan: ScanRun): void => {
+    try {
+      const current = getStoredOfflineScans();
+      current.unshift(scan);
+      localStorage.setItem('drift_offline_scans', JSON.stringify(current));
+
+      const projects = getStoredOfflineProjects();
+      const p = projects.find((proj) => proj.id === scan.project_id);
+      if (p) {
+        p.total_scans = (p.total_scans || 0) + 1;
+        p.latest_scan_status = scan.status;
+        p.latest_scan_timestamp = scan.completed_at || scan.started_at;
+        p.latest_compliance_percentage = scan.compliance_percentage;
+        p.open_findings_count = scan.total_findings;
+        p.critical_findings_count = scan.critical_findings;
+        saveStoredOfflineProjects(projects);
+      }
+    } catch {}
+  };
+
   // Projects
   if (cleanEndpoint === '/projects') {
     if (method === 'POST') {
@@ -411,35 +472,36 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
   if (cleanEndpoint === '/scans' || (cleanEndpoint.startsWith('/projects/') && cleanEndpoint.endsWith('/scans'))) {
     const matchProjId = cleanEndpoint.startsWith('/projects/')
       ? cleanEndpoint.split('/')[2]
-      : 'proj-ecommerce-drift';
-    const scanObj = {
-      id: 'scan-run-latest-001',
-      project_id: matchProjId,
-      architecture_id: 'arch-layered-001',
-      status: 'completed',
-      started_at: new Date(Date.now() - 3600000).toISOString(),
-      completed_at: new Date(Date.now() - 3550000).toISOString(),
-      duration_ms: 50420,
-      source_version: 'v1.4.2-audit',
-      files_analyzed: 14,
-      modules_discovered: 8,
-      dependencies_discovered: 12,
-      total_findings: 2,
-      critical_findings: 1,
-      high_findings: 1,
-      medium_findings: 0,
-      low_findings: 0,
-      compliance_percentage: 85.7,
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-    };
+      : undefined;
+
     if (cleanEndpoint === '/scans' && method === 'POST') {
       let body: any = {};
       try { body = JSON.parse(options.body as string); } catch {}
-      if (body.project_id) scanObj.project_id = body.project_id;
-      if (body.source_version) scanObj.source_version = body.source_version;
-      return scanObj as unknown as T;
+      const targetProjId = body.project_id || 'proj-ecommerce-drift';
+      const newScan: ScanRun = {
+        id: 'scan-' + Date.now(),
+        project_id: targetProjId,
+        architecture_id: body.architecture_id || 'arch-layered-001',
+        status: 'completed',
+        started_at: new Date(Date.now() - 10000).toISOString(),
+        completed_at: new Date().toISOString(),
+        duration_ms: 12450,
+        source_version: body.source_version || 'v1.0.0',
+        files_analyzed: 8,
+        modules_discovered: 4,
+        dependencies_discovered: 6,
+        total_findings: 0,
+        critical_findings: 0,
+        high_findings: 0,
+        medium_findings: 0,
+        low_findings: 0,
+        compliance_percentage: 100,
+        created_at: new Date().toISOString(),
+      };
+      saveStoredOfflineScan(newScan);
+      return newScan as unknown as T;
     }
-    return [scanObj] as unknown as T;
+    return getStoredOfflineScans(matchProjId) as unknown as T;
   }
 
   if (cleanEndpoint.startsWith('/scans/') && !cleanEndpoint.includes('/findings') && !cleanEndpoint.includes('/graph') && !cleanEndpoint.includes('/report') && !cleanEndpoint.includes('/compare')) {
@@ -550,44 +612,63 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
 
   // Overview
   if (cleanEndpoint.startsWith('/overview')) {
-    const scanObj = {
-      id: 'scan-run-latest-001',
-      project_id: 'proj-ecommerce-drift',
-      architecture_id: 'arch-layered-001',
-      status: 'completed' as const,
-      started_at: new Date(Date.now() - 3600000).toISOString(),
-      completed_at: new Date(Date.now() - 3550000).toISOString(),
-      duration_ms: 50420,
-      source_version: 'v1.4.2-audit',
-      files_analyzed: 14,
-      modules_discovered: 8,
-      dependencies_discovered: 12,
-      total_findings: 2,
-      critical_findings: 1,
-      high_findings: 1,
-      medium_findings: 0,
-      low_findings: 0,
-      compliance_percentage: 85.7,
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-    };
+    let targetProjId: string | null = null;
+    try {
+      const q = endpoint.includes('?') ? endpoint.split('?')[1] : '';
+      const params = new URLSearchParams(q);
+      targetProjId = params.get('project_id');
+    } catch {}
+
+    const allProjects = getStoredOfflineProjects();
+    const targetProject = targetProjId
+      ? allProjects.find((p) => p.id === targetProjId)
+      : allProjects[0];
+
+    const projectScans = getStoredOfflineScans(targetProject?.id);
+    const latestScan = projectScans.length > 0 ? projectScans[0] : undefined;
+
+    if (!latestScan || (targetProject && targetProject.total_scans === 0)) {
+      return {
+        project_id: targetProject?.id || 'proj-ecommerce-drift',
+        project_name: targetProject?.name || 'Software Project',
+        total_projects: allProjects.length,
+        total_scans: 0,
+        total_findings: 0,
+        critical_findings: 0,
+        high_findings: 0,
+        medium_findings: 0,
+        low_findings: 0,
+        compliance_percentage: 100,
+        latest_scan: undefined,
+        severity_distribution: {
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+        },
+        trends: [],
+        top_violated_rules: [],
+        component_stats: [],
+      } as unknown as T;
+    }
 
     return {
-      project_id: 'proj-ecommerce-drift',
-      project_name: 'Software Architecture Drift Detector',
-      total_projects: 1,
-      total_scans: 4,
-      total_findings: 2,
-      critical_findings: 1,
-      high_findings: 1,
-      medium_findings: 0,
-      low_findings: 0,
-      compliance_percentage: 85.7,
-      latest_scan: scanObj,
+      project_id: targetProject?.id || 'proj-ecommerce-drift',
+      project_name: targetProject?.name || 'Software Architecture Drift Detector',
+      total_projects: allProjects.length,
+      total_scans: targetProject?.total_scans || projectScans.length,
+      total_findings: latestScan.total_findings,
+      critical_findings: latestScan.critical_findings,
+      high_findings: latestScan.high_findings,
+      medium_findings: latestScan.medium_findings,
+      low_findings: latestScan.low_findings,
+      compliance_percentage: latestScan.compliance_percentage,
+      latest_scan: latestScan,
       severity_distribution: {
-        critical: 1,
-        high: 1,
-        medium: 0,
-        low: 0,
+        critical: latestScan.critical_findings,
+        high: latestScan.high_findings,
+        medium: latestScan.medium_findings,
+        low: latestScan.low_findings,
       },
       trends: [
         {
@@ -616,11 +697,11 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
         },
         {
           timestamp: '2026-11-01',
-          scan_id: 'scan-run-latest-001',
-          compliance_percentage: 85.7,
-          total_findings: 2,
-          critical_findings: 1,
-          high_findings: 1,
+          scan_id: latestScan.id,
+          compliance_percentage: latestScan.compliance_percentage,
+          total_findings: latestScan.total_findings,
+          critical_findings: latestScan.critical_findings,
+          high_findings: latestScan.high_findings,
         },
       ],
       top_violated_rules: [
@@ -664,8 +745,8 @@ function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T 
           modules_count: 2,
           incoming_dependencies: 1,
           outgoing_dependencies: 1,
-          violations_count: 2,
-          is_compliant: false,
+          violations_count: latestScan.total_findings,
+          is_compliant: latestScan.total_findings === 0,
         },
         {
           component: 'infrastructure',
