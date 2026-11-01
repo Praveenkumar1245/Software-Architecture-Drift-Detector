@@ -1,11 +1,13 @@
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 import logging
 
 from backend.app.core.config import settings
-from backend.app.core.database import engine, Base
+from backend.app.core.database import engine, Base, get_db
 from backend.app.api.v1.api import api_router
+from backend.app.api.v1.endpoints.health import health_check
 import backend.app.models  # ensure models loaded
 
 from contextlib import asynccontextmanager
@@ -64,6 +66,11 @@ def root():
         "docs": "/docs",
         "health": f"{settings.API_V1_STR}/health"
     }
+
+@app.get("/health", tags=["Health"])
+def root_health(db: Session = Depends(get_db)):
+    """Root health check endpoint for cloud load balancers and deployment platforms."""
+    return health_check(db=db)
 
 if __name__ == "__main__":
     import uvicorn

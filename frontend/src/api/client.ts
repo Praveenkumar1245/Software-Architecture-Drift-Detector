@@ -331,6 +331,13 @@ export const api = {
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
   uploadProjectZip: async (projectId: string, file: File): Promise<{ message: string; repository_path: string }> => {
+    const base = getApiBaseUrl();
+    if (isStaticProductionHost() && !base) {
+      throw new Error(
+        'Backend Not Connected: This website is hosted statically on GitHub Pages, which cannot execute the Python FastAPI backend. To upload archives, please connect a live backend or run locally.'
+      );
+    }
+
     const formData = new FormData();
     formData.append('file', file);
 
@@ -341,15 +348,23 @@ export const api = {
       headers['X-Session-Token'] = token;
     }
 
-    const res = await fetch(`${API_BASE}/projects/${projectId}/upload`, {
+    const res = await fetch(`${base}/projects/${projectId}/upload`, {
       method: 'POST',
       credentials: 'include',
       headers,
       body: formData,
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Upload failed');
+      let errorMessage = `Upload failed (${res.status} ${res.statusText})`;
+      try {
+        const err = await res.json();
+        if (err.detail) {
+          errorMessage = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail);
+        }
+      } catch {
+        // Not JSON
+      }
+      throw new Error(errorMessage);
     }
     return res.json();
   },
@@ -410,11 +425,15 @@ export const api = {
     const query = projectId ? `?project_id=${projectId}` : '';
     return request<OverviewMetrics>(`/overview${query}`);
   },
-  getJsonReportUrl: (scanId: string) => `${API_BASE}/scans/${scanId}/report/json`,
-  getCsvReportUrl: (scanId: string) => `${API_BASE}/scans/${scanId}/report/csv`,
-  getPdfReportUrl: (scanId: string) => `${API_BASE}/scans/${scanId}/report/pdf`,
+  getJsonReportUrl: (scanId: string) => `${getApiBaseUrl()}/scans/${scanId}/report/json`,
+  getCsvReportUrl: (scanId: string) => `${getApiBaseUrl()}/scans/${scanId}/report/csv`,
+  getPdfReportUrl: (scanId: string) => `${getApiBaseUrl()}/scans/${scanId}/report/pdf`,
   downloadCsvReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    const url = `${API_BASE}/scans/${scanId}/report/csv`;
+    const base = getApiBaseUrl();
+    if (isStaticProductionHost() && !base) {
+      throw new Error('Backend Not Connected: Static GitHub Pages cannot download reports without a connected backend.');
+    }
+    const url = `${base}/scans/${scanId}/report/csv`;
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
       'Accept': 'text/csv',
@@ -482,7 +501,11 @@ export const api = {
     }, 150);
   },
   downloadPdfReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    const url = `${API_BASE}/scans/${scanId}/report/pdf`;
+    const base = getApiBaseUrl();
+    if (isStaticProductionHost() && !base) {
+      throw new Error('Backend Not Connected: Static GitHub Pages cannot download reports without a connected backend.');
+    }
+    const url = `${base}/scans/${scanId}/report/pdf`;
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
       'Accept': 'application/pdf',

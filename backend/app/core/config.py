@@ -17,7 +17,10 @@ class Settings:
     API_V1_STR: str = "/api/v1"
     
     # Database
-    DATABASE_URL: str = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'drift_detector.db'}")
+    _raw_db_url = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR / 'drift_detector.db'}")
+    if _raw_db_url.startswith("postgres://"):
+        _raw_db_url = _raw_db_url.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL: str = _raw_db_url
     
     # Server & Network
     HOST: str = os.getenv("HOST", "127.0.0.1")
@@ -41,7 +44,7 @@ class Settings:
     SESSION_DURATION_HOURS: int = 24 * 7   # 7 days
     SESSION_REMEMBER_HOURS: int = 24 * 30  # 30 days
     COOKIE_SECURE: bool = os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1")
-    COOKIE_SAMESITE: str = "lax"
+    COOKIE_SAMESITE: str = os.getenv("COOKIE_SAMESITE", "none" if os.getenv("COOKIE_SECURE", "false").lower() in ("true", "1") else "lax")
     VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
     PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 2
     

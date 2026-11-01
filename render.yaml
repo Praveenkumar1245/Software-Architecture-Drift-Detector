@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: software-architecture-drift-detector
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: FRONTEND_URL
+        value: https://praveenkumar1245.github.io
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: COOKIE_SAMESITE
+        value: "none"
+      - key: EMAIL_TEST_MODE
+        value: "true"
