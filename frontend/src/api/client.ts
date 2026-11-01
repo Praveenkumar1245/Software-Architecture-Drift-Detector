@@ -13,6 +13,12 @@ import {
   MessageResponse,
 } from '../types';
 import { isDevDemoActive, handleDevDemoRequest } from './devDemo';
+import {
+  isGitHubPagesHost,
+  handleStaticShowcaseRequest,
+  downloadShowcaseCsv,
+  downloadShowcasePdf,
+} from './staticShowcase';
 
 export const CUSTOM_API_URL_STORAGE_KEY = 'drift_custom_api_url';
 const SESSION_TOKEN_KEY = 'drift_session_token';
@@ -301,7 +307,15 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   // Resolve and validate final target URL origin before dispatching or attaching credentials
-  const targetUrl = buildAndValidateTargetUrl(endpoint);
+  let targetUrl: string;
+  try {
+    targetUrl = buildAndValidateTargetUrl(endpoint);
+  } catch (err) {
+    if (isGitHubPagesHost()) {
+      return handleStaticShowcaseRequest<T>(endpoint, options);
+    }
+    throw err;
+  }
 
   // Assemble headers with dual authentication: HttpOnly cookie + Bearer token
   const headers: Record<string, string> = {
@@ -324,6 +338,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       headers,
     });
   } catch {
+    if (isGitHubPagesHost()) {
+      return handleStaticShowcaseRequest<T>(endpoint, options);
+    }
     const base = getApiBaseUrl();
     throw new Error(
       `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
@@ -331,6 +348,10 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 
   if (!response.ok) {
+    if ((response.status === 404 || response.status === 502 || response.status === 503) && isGitHubPagesHost()) {
+      return handleStaticShowcaseRequest<T>(endpoint, options);
+    }
+
     let errorMessage = `API request failed: ${response.status} ${response.statusText}`.trim();
 
     if (response.status === 400) {
@@ -513,7 +534,15 @@ export const api = {
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
 
   uploadProjectZip: async (projectId: string, file: File): Promise<{ message: string; repository_path: string }> => {
-    const targetUrl = buildAndValidateTargetUrl(`/projects/${encodeURIComponent(projectId)}/upload`);
+    let targetUrl: string;
+    try {
+      targetUrl = buildAndValidateTargetUrl(`/projects/${encodeURIComponent(projectId)}/upload`);
+    } catch (err) {
+      if (isGitHubPagesHost()) {
+        return { message: 'Project code archive processed successfully (showcase sandbox)', repository_path: `uploads/${file.name}` };
+      }
+      throw err;
+    }
 
     const formData = new FormData();
     formData.append('file', file);
@@ -534,6 +563,9 @@ export const api = {
         body: formData,
       });
     } catch {
+      if (isGitHubPagesHost()) {
+        return { message: 'Project code archive processed successfully (showcase sandbox)', repository_path: `uploads/${file.name}` };
+      }
       const base = getApiBaseUrl();
       throw new Error(
         `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
@@ -541,6 +573,9 @@ export const api = {
     }
 
     if (!res.ok) {
+      if ((res.status === 404 || res.status === 502 || res.status === 503) && isGitHubPagesHost()) {
+        return { message: 'Project code archive processed successfully (showcase sandbox)', repository_path: `uploads/${file.name}` };
+      }
       let errorMessage = `Upload failed (${res.status} ${res.statusText})`;
       try {
         const err = await res.json();
@@ -618,7 +653,16 @@ export const api = {
   getPdfReportUrl: (scanId: string) =>
     buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`),
   downloadCsvReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    const targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/csv`);
+    let targetUrl: string;
+    try {
+      targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/csv`);
+    } catch (err) {
+      if (isGitHubPagesHost()) {
+        downloadShowcaseCsv(scanId, customFilename);
+        return;
+      }
+      throw err;
+    }
 
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
@@ -637,6 +681,10 @@ export const api = {
         headers,
       });
     } catch {
+      if (isGitHubPagesHost()) {
+        downloadShowcaseCsv(scanId, customFilename);
+        return;
+      }
       const base = getApiBaseUrl();
       throw new Error(
         `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
@@ -644,6 +692,10 @@ export const api = {
     }
 
     if (!response.ok) {
+      if ((response.status === 404 || response.status === 502 || response.status === 503) && isGitHubPagesHost()) {
+        downloadShowcaseCsv(scanId, customFilename);
+        return;
+      }
       let errorMessage = `Failed to download CSV (${response.status} ${response.statusText})`;
       try {
         const errorJson = await response.json();
@@ -695,7 +747,16 @@ export const api = {
     }, 150);
   },
   downloadPdfReport: async (scanId: string, customFilename?: string): Promise<void> => {
-    const targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`);
+    let targetUrl: string;
+    try {
+      targetUrl = buildAndValidateTargetUrl(`/scans/${encodeURIComponent(scanId)}/report/pdf`);
+    } catch (err) {
+      if (isGitHubPagesHost()) {
+        downloadShowcasePdf(scanId, customFilename);
+        return;
+      }
+      throw err;
+    }
 
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
@@ -714,6 +775,10 @@ export const api = {
         headers,
       });
     } catch {
+      if (isGitHubPagesHost()) {
+        downloadShowcasePdf(scanId, customFilename);
+        return;
+      }
       const base = getApiBaseUrl();
       throw new Error(
         `Unable to reach backend service at ${base || targetUrl}. Please ensure the server is running and accessible.`
@@ -721,6 +786,10 @@ export const api = {
     }
 
     if (!response.ok) {
+      if ((response.status === 404 || response.status === 502 || response.status === 503) && isGitHubPagesHost()) {
+        downloadShowcasePdf(scanId, customFilename);
+        return;
+      }
       let errorMessage = `Failed to download PDF (${response.status} ${response.statusText})`;
       try {
         const errorJson = await response.json();
