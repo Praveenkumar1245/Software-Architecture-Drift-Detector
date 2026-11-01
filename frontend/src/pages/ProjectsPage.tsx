@@ -119,8 +119,29 @@ export const ProjectsPage: React.FC = () => {
       </div>
 
       {/* Projects Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {projects.map((p) => {
+      {projects.length === 0 ? (
+        <div className="bg-white border border-[#D8E2EE] rounded-[12px] p-12 text-center max-w-lg mx-auto shadow-xs">
+          <div className="h-12 w-12 rounded-xl bg-[#F0FDF9] border border-[#CCFBEF] text-[#009F95] flex items-center justify-center mx-auto mb-3">
+            <FolderGit2 className="h-6 w-6" />
+          </div>
+          <h3 className="text-lg font-bold text-[#0F172A] mb-1">No Projects Registered</h3>
+          <p className="text-xs text-[#475569] mb-5">
+            You don't have any registered projects yet. Create a project to start analyzing codebases for architectural drift.
+          </p>
+          <button
+            onClick={() => {
+              setError(null);
+              setShowCreateModal(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-lg text-white bg-[#03162D] hover:bg-[#0A2548] transition-colors cursor-pointer"
+          >
+            <Plus className="h-4 w-4" />
+            <span>Create First Project</span>
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {projects.map((p) => {
           const isActive = activeProject?.id === p.id;
           return (
             <div
@@ -272,6 +293,7 @@ export const ProjectsPage: React.FC = () => {
           );
         })}
       </div>
+      )}
 
       {/* ZIP Upload Modal */}
       {uploadingProjectId && (

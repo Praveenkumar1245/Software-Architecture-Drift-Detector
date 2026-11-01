@@ -14,7 +14,30 @@ import {
 } from '../types';
 
 export const CUSTOM_API_URL_STORAGE_KEY = 'drift_custom_api_url';
+const SESSION_TOKEN_KEY = 'drift_session_token';
 
+// Purge any legacy mock data stored in local storage from older versions
+if (typeof window !== 'undefined') {
+  try {
+    localStorage.removeItem('drift_offline_projects');
+    localStorage.removeItem('drift_offline_scans');
+    localStorage.removeItem('drift_demo_user');
+    const legacyToken = localStorage.getItem(SESSION_TOKEN_KEY);
+    if (legacyToken && (legacyToken.startsWith('drift_demo_') || legacyToken === 'fake-token')) {
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
+    }
+  } catch {
+    // Storage access restricted
+  }
+}
+
+/**
+ * Validates whether a target backend URL belongs to an explicitly approved origin.
+ * In development, loopback HTTP/HTTPS is permitted.
+ * In production, only HTTPS on explicitly trusted domains (*.onrender.com, *.railway.app, *.fly.dev)
+ * or same-origin is accepted.
+ */
 export function isAllowedBackendOrigin(urlStr: string): boolean {
   if (!urlStr || typeof urlStr !== 'string') return false;
   const trimmed = urlStr.trim();
@@ -52,10 +75,32 @@ export function isAllowedBackendOrigin(urlStr: string): boolean {
   }
 }
 
+/**
+ * Detects if the frontend is hosted on a static host (such as GitHub Pages).
+ */
 export function isStaticProductionHost(): boolean {
   if (typeof window === 'undefined') return false;
   const host = window.location.hostname.toLowerCase();
   return host.endsWith('github.io') || (host !== 'localhost' && host !== '127.0.0.1' && !host.startsWith('192.168.') && !host.startsWith('10.'));
+}
+
+/**
+ * Returns whether development demo mode is explicitly enabled.
+ * Demo mode is strictly isolated to development (import.meta.env.DEV) and requires an explicit query flag.
+ * It is ALWAYS false in production.
+ */
+export function isDevDemoEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  // Strictly disabled in production builds or on static production hosts
+  if (!(import.meta as any)?.env?.DEV) return false;
+  if (isStaticProductionHost()) return false;
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('demo') === 'true' || params.get('env') === 'demo';
+  } catch {
+    return false;
+  }
 }
 
 export function getCustomApiUrl(): string | null {
@@ -73,19 +118,15 @@ export function getCustomApiUrl(): string | null {
 
 export function setCustomApiUrl(url: string | null): void {
   if (typeof window === 'undefined') return;
-  try {
-    if (url && url.trim()) {
-      const cleaned = url.trim().replace(/\/+$/, '');
-      if (!isAllowedBackendOrigin(cleaned)) {
-        throw new Error('Invalid backend URL: must be an HTTPS URL on an approved domain (*.onrender.com, *.railway.app, *.fly.dev) or localhost.');
-      }
-      const finalUrl = cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
-      localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, finalUrl);
-    } else {
-      localStorage.removeItem(CUSTOM_API_URL_STORAGE_KEY);
+  if (url && url.trim()) {
+    const cleaned = url.trim().replace(/\/+$/, '');
+    if (!isAllowedBackendOrigin(cleaned)) {
+      throw new Error('Invalid backend URL: must be an HTTPS URL on an approved domain (*.onrender.com, *.railway.app, *.fly.dev) or localhost.');
     }
-  } catch {
-    // Ignore storage errors
+    const finalUrl = cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
+    localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, finalUrl);
+  } else {
+    localStorage.removeItem(CUSTOM_API_URL_STORAGE_KEY);
   }
 }
 
@@ -113,6 +154,7 @@ export function getApiBaseUrl(): string {
         if (isAllowedBackendOrigin(cleaned)) {
           return cleaned.endsWith('/api/v1') ? cleaned : `${cleaned}/api/v1`;
         } else {
+          console.warn('[Security] Purged unapproved stored backend URL:', cleaned);
           localStorage.removeItem(CUSTOM_API_URL_STORAGE_KEY);
         }
       }
@@ -144,18 +186,21 @@ export function getApiBaseUrl(): string {
   }
 
   // 5. On static production hosts (GitHub Pages) with no configured backend:
-  // Do NOT return relative '/api/v1' because relative calls on GitHub Pages resolve to
-  // https://<username>.github.io/api/v1 which Fastly rejects with 405 Method Not Allowed!
+  // Return empty string to prevent relative /api/v1 calls resolving to GitHub Pages static host
   return '';
 }
 
 export const API_BASE = getApiBaseUrl();
 
-const SESSION_TOKEN_KEY = 'drift_session_token';
-
 export function getStoredSessionToken(): string | null {
   try {
-    return sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY);
+    const token = sessionStorage.getItem(SESSION_TOKEN_KEY) || localStorage.getItem(SESSION_TOKEN_KEY);
+    if (token && (token.startsWith('drift_demo_') || token === 'fake-token')) {
+      sessionStorage.removeItem(SESSION_TOKEN_KEY);
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+      return null;
+    }
+    return token;
   } catch {
     return null;
   }
@@ -179,817 +224,78 @@ export interface ApiError extends Error {
   status?: number;
 }
 
-// Static hosting offline fallback engine
-function handleStaticOffline<T>(endpoint: string, options: RequestInit = {}): T {
+/**
+ * Development-only demo fallback.
+ * Strictly forbidden in production; throws immediately if invoked outside an explicit dev demo session.
+ */
+function handleDevDemoOnly<T>(endpoint: string, options: RequestInit = {}): T {
+  if (!isDevDemoEnabled()) {
+    throw new Error('Demo mode is strictly disabled in production environments.');
+  }
+
   const method = (options.method || 'GET').toUpperCase();
   const cleanEndpoint = endpoint.split('?')[0];
 
-  // Auth: Login
   if (cleanEndpoint === '/auth/login' && method === 'POST') {
-    let email = 'architect@enterprise.com';
-    try {
-      if (options.body) {
-        const parsed = JSON.parse(options.body as string);
-        if (parsed.email) email = parsed.email;
-      }
-    } catch {}
     const demoUser: User = {
-      id: 'usr-arch-demo',
-      email,
-      full_name: email.split('@')[0],
+      id: 'usr-dev-demo',
+      email: 'demo@architecture-drift.dev',
+      full_name: '[Demo] Development Architect',
       is_verified: true,
       created_at: new Date().toISOString(),
     };
-    try {
-      localStorage.setItem('drift_demo_user', JSON.stringify(demoUser));
-      setStoredSessionToken('drift_demo_token_authenticated');
-    } catch {}
     return {
-      message: 'Signed in successfully',
+      message: 'Signed in to Development Demo environment',
       user: demoUser,
       session_token: 'drift_demo_token_authenticated',
-      expires_at: new Date(Date.now() + 86400000 * 30).toISOString(),
+      expires_at: new Date(Date.now() + 86400000).toISOString(),
     } as unknown as T;
   }
 
-  // Auth: Status
   if (cleanEndpoint === '/auth/status') {
-    const token = getStoredSessionToken();
-    let storedUser: User | null = null;
-    try {
-      const u = localStorage.getItem('drift_demo_user');
-      if (u) storedUser = JSON.parse(u);
-    } catch {}
-
-    if (token && storedUser) {
-      return { authenticated: true, user: storedUser } as unknown as T;
-    }
     return { authenticated: false, user: null } as unknown as T;
   }
 
-  // Auth: Me
-  if (cleanEndpoint === '/auth/me') {
-    let storedUser: User = {
-      id: 'usr-arch-demo',
-      email: 'architect@enterprise.com',
-      full_name: 'Enterprise Architect',
-      is_verified: true,
-      created_at: new Date().toISOString(),
-    };
-    try {
-      const u = localStorage.getItem('drift_demo_user');
-      if (u) storedUser = JSON.parse(u);
-    } catch {}
-    return storedUser as unknown as T;
+  if (cleanEndpoint === '/projects') {
+    return [] as unknown as T;
   }
 
-  // Auth: Logout
-  if (cleanEndpoint === '/auth/logout') {
-    try {
-      localStorage.removeItem('drift_demo_user');
-      setStoredSessionToken(null);
-    } catch {}
-    return { message: 'Signed out successfully' } as unknown as T;
-  }
-
-  // Auth: Register & Forgot Password
-  if (cleanEndpoint === '/auth/register' || cleanEndpoint === '/auth/signup') {
-    return {
-      message: 'Account registered successfully! You may now sign in.',
-      user_id: 'usr-new-001',
-      email: 'architect@enterprise.com',
-    } as unknown as T;
-  }
-  if (cleanEndpoint === '/auth/forgot-password' || cleanEndpoint === '/auth/resend-verification' || cleanEndpoint === '/auth/resend-signup-otp') {
-    return { message: 'Verification link/OTP dispatched successfully.' } as unknown as T;
-  }
-  if (cleanEndpoint === '/auth/verify-email' || cleanEndpoint === '/auth/verify-signup-otp' || cleanEndpoint === '/auth/reset-password') {
-    return { message: 'Action completed successfully.' } as unknown as T;
-  }
-
-  // Health
   if (cleanEndpoint === '/health') {
     return {
       status: 'healthy',
-      database: 'healthy',
-      storage: 'healthy',
-      version: '1.0.0',
-      project: 'Software Architecture Drift Detector',
-    } as unknown as T;
-  }
-
-  // Projects Persistence Helpers
-  const getStoredOfflineProjects = (): Project[] => {
-    try {
-      const raw = localStorage.getItem('drift_offline_projects');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    const defaultList: Project[] = [
-      {
-        id: 'proj-ecommerce-drift',
-        name: 'Software Architecture Drift Detector',
-        description: 'Production architecture inspection workspace comparing clean layered architecture against AST-extracted dependencies.',
-        repository_type: 'local_zip',
-        repository_path: 'sample-project/app',
-        primary_language: 'python',
-        source_dirs: 'app,src',
-        exclude_dirs: '.venv,venv,__pycache__,tests,dist,build,node_modules,.git',
-        created_at: '2026-10-29T18:00:00Z',
-        updated_at: new Date().toISOString(),
-        total_scans: 4,
-        latest_scan_status: 'completed',
-        latest_scan_timestamp: new Date().toISOString(),
-        latest_compliance_percentage: 85.7,
-        open_findings_count: 2,
-        critical_findings_count: 1,
-      }
-    ];
-    try {
-      localStorage.setItem('drift_offline_projects', JSON.stringify(defaultList));
-    } catch {}
-    return defaultList;
-  };
-
-  const saveStoredOfflineProjects = (projectsList: Project[]): void => {
-    try {
-      localStorage.setItem('drift_offline_projects', JSON.stringify(projectsList));
-    } catch {}
-  };
-
-  const getStoredOfflineScans = (projectId?: string): ScanRun[] => {
-    try {
-      const raw = localStorage.getItem('drift_offline_scans');
-      if (raw) {
-        const parsed: ScanRun[] = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          if (projectId) return parsed.filter((s) => s.project_id === projectId);
-          return parsed;
-        }
-      }
-    } catch {}
-
-    const defaultScan: ScanRun = {
-      id: 'scan-run-latest-001',
-      project_id: 'proj-ecommerce-drift',
-      architecture_id: 'arch-layered-001',
-      status: 'completed',
-      started_at: new Date(Date.now() - 3600000).toISOString(),
-      completed_at: new Date(Date.now() - 3550000).toISOString(),
-      duration_ms: 50420,
-      source_version: 'v1.4.2-audit',
-      files_analyzed: 14,
-      modules_discovered: 8,
-      dependencies_discovered: 12,
-      total_findings: 2,
-      critical_findings: 1,
-      high_findings: 1,
-      medium_findings: 0,
-      low_findings: 0,
-      compliance_percentage: 85.7,
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-    };
-
-    try {
-      localStorage.setItem('drift_offline_scans', JSON.stringify([defaultScan]));
-    } catch {}
-
-    if (projectId && projectId !== 'proj-ecommerce-drift') return [];
-    return [defaultScan];
-  };
-
-  const saveStoredOfflineScan = (scan: ScanRun): void => {
-    try {
-      const current = getStoredOfflineScans();
-      current.unshift(scan);
-      localStorage.setItem('drift_offline_scans', JSON.stringify(current));
-
-      const projects = getStoredOfflineProjects();
-      const p = projects.find((proj) => proj.id === scan.project_id);
-      if (p) {
-        p.total_scans = (p.total_scans || 0) + 1;
-        p.latest_scan_status = scan.status;
-        p.latest_scan_timestamp = scan.completed_at || scan.started_at;
-        p.latest_compliance_percentage = scan.compliance_percentage;
-        p.open_findings_count = scan.total_findings;
-        p.critical_findings_count = scan.critical_findings;
-        saveStoredOfflineProjects(projects);
-      }
-    } catch {}
-  };
-
-  // Projects
-  if (cleanEndpoint === '/projects') {
-    if (method === 'POST') {
-      let body: any = {};
-      try { body = JSON.parse(options.body as string); } catch {}
-      const newProj: Project = {
-        id: 'proj-' + Date.now(),
-        name: body.name || 'Software Project',
-        description: body.description || '',
-        repository_type: body.repository_type || 'local_zip',
-        repository_path: body.repository_path || 'sample-project/app',
-        primary_language: body.primary_language || 'python',
-        source_dirs: body.source_dirs || 'app,src',
-        exclude_dirs: body.exclude_dirs || '.venv,venv,__pycache__,tests,dist,build,node_modules,.git',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        total_scans: 0,
-        open_findings_count: 0,
-        critical_findings_count: 0,
-      };
-      const list = getStoredOfflineProjects();
-      list.unshift(newProj);
-      saveStoredOfflineProjects(list);
-      return newProj as unknown as T;
-    }
-    return getStoredOfflineProjects() as unknown as T;
-  }
-
-  if (cleanEndpoint.startsWith('/projects/') && !cleanEndpoint.includes('/scans')) {
-    const projId = cleanEndpoint.replace('/projects/', '');
-    if (method === 'DELETE') {
-      const list = getStoredOfflineProjects().filter((p) => p.id !== projId);
-      saveStoredOfflineProjects(list);
-      return {} as unknown as T;
-    }
-    if (method === 'PUT') {
-      let body: any = {};
-      try { body = JSON.parse(options.body as string); } catch {}
-      const list = getStoredOfflineProjects();
-      const idx = list.findIndex((p) => p.id === projId);
-      if (idx >= 0) {
-        list[idx] = { ...list[idx], ...body, updated_at: new Date().toISOString() };
-        saveStoredOfflineProjects(list);
-        return list[idx] as unknown as T;
-      }
-    }
-    const found = getStoredOfflineProjects().find((p) => p.id === projId);
-    if (found) return found as unknown as T;
-    return getStoredOfflineProjects()[0] as unknown as T;
-  }
-
-  // Architecture Templates
-  if (cleanEndpoint === '/architectures/templates') {
-    return {
-      layered: {
-        name: 'Standard Layered Architecture',
-        description: 'Four-tier architectural layout enforcing strict downward dependency flow: Presentation -> Application -> Domain -> Infrastructure.',
-        components: [
-          { name: 'presentation', layer: 1, allowed_dependencies: ['application'], forbidden_dependencies: ['domain', 'infrastructure'], path_patterns: ['app/presentation/**', 'presentation/**'] },
-          { name: 'application', layer: 2, allowed_dependencies: ['domain', 'infrastructure'], forbidden_dependencies: ['presentation'], path_patterns: ['app/application/**', 'application/**'] },
-          { name: 'domain', layer: 3, allowed_dependencies: [], forbidden_dependencies: ['presentation', 'infrastructure', 'application'], path_patterns: ['app/domain/**', 'domain/**'] },
-          { name: 'infrastructure', layer: 4, allowed_dependencies: ['domain'], forbidden_dependencies: ['presentation'], path_patterns: ['app/infrastructure/**', 'infrastructure/**'] },
-        ],
-        rules: [
-          { id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION', type: 'forbidden_dependency', description: 'Domain layer must never import presentation concerns.', severity: 'critical', from_component: 'domain', to_component: 'presentation' },
-          { id: 'LAYER-DIRECTION-RULE', type: 'layer_violation', description: 'Lower layers must not depend on higher layers.', severity: 'high', layer_direction: 'downward' },
-        ]
-      }
-    } as unknown as T;
-  }
-
-  // Project Architectures
-  if (cleanEndpoint.startsWith('/architectures/project/')) {
-    const targetProjId = cleanEndpoint.replace('/architectures/project/', '') || 'proj-ecommerce-drift';
-    return [
-      {
-        id: 'arch-layered-001',
-        project_id: targetProjId,
-        name: 'Standard Layered Architecture',
-        description: 'Four-tier architectural layout enforcing strict downward dependency flow: Presentation -> Application -> Domain -> Infrastructure.',
-        version: 1,
-        format: 'json',
-        raw_content: JSON.stringify({
-          name: 'Standard Layered Architecture',
-          components: [
-            { name: 'presentation', layer: 1, allowed_dependencies: ['application'], forbidden_dependencies: ['domain', 'infrastructure'], path_patterns: ['app/presentation/**', 'presentation/**'] },
-            { name: 'application', layer: 2, allowed_dependencies: ['domain', 'infrastructure'], forbidden_dependencies: ['presentation'], path_patterns: ['app/application/**', 'application/**'] },
-            { name: 'domain', layer: 3, allowed_dependencies: [], forbidden_dependencies: ['presentation', 'infrastructure', 'application'], path_patterns: ['app/domain/**', 'domain/**'] },
-            { name: 'infrastructure', layer: 4, allowed_dependencies: ['domain'], forbidden_dependencies: ['presentation'], path_patterns: ['app/infrastructure/**', 'infrastructure/**'] },
-          ],
-          rules: [
-            { id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION', type: 'forbidden_dependency', description: 'Domain layer must never import presentation concerns.', severity: 'critical', from_component: 'domain', to_component: 'presentation' },
-            { id: 'LAYER-DIRECTION-RULE', type: 'layer_violation', description: 'Lower layers must not depend on higher layers.', severity: 'high', layer_direction: 'downward' },
-          ]
-        }, null, 2),
-        components: [
-          { name: 'presentation', layer: 1, allowed_dependencies: ['application'], forbidden_dependencies: ['domain', 'infrastructure'], path_patterns: ['app/presentation/**', 'presentation/**'], required_dependencies: [] },
-          { name: 'application', layer: 2, allowed_dependencies: ['domain', 'infrastructure'], forbidden_dependencies: ['presentation'], path_patterns: ['app/application/**', 'application/**'], required_dependencies: [] },
-          { name: 'domain', layer: 3, allowed_dependencies: [], forbidden_dependencies: ['presentation', 'infrastructure', 'application'], path_patterns: ['app/domain/**', 'domain/**'], required_dependencies: [] },
-          { name: 'infrastructure', layer: 4, allowed_dependencies: ['domain'], forbidden_dependencies: ['presentation'], path_patterns: ['app/infrastructure/**', 'infrastructure/**'], required_dependencies: [] },
-        ],
-        rules: [
-          { id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION', type: 'forbidden_dependency', description: 'Domain layer must never import presentation concerns.', severity: 'critical', from_component: 'domain', to_component: 'presentation' },
-          { id: 'LAYER-DIRECTION-RULE', type: 'layer_violation', description: 'Lower layers must not depend on higher layers.', severity: 'high', layer_direction: 'downward' },
-        ],
-        is_active: true,
-        created_at: '2026-10-29T18:00:00Z',
-        updated_at: new Date().toISOString(),
-      }
-    ] as unknown as T;
-  }
-
-  // Activate Architecture
-  if (cleanEndpoint.startsWith('/architectures/') && cleanEndpoint.endsWith('/activate')) {
-    return {
-      id: 'arch-layered-001',
-      project_id: 'proj-ecommerce-drift',
-      name: 'Standard Layered Architecture',
-      description: 'Four-tier architectural layout enforcing strict downward dependency flow: Presentation -> Application -> Domain -> Infrastructure.',
-      version: 1,
-      format: 'json',
-      is_active: true,
-      created_at: '2026-10-29T18:00:00Z',
-      updated_at: new Date().toISOString(),
-    } as unknown as T;
-  }
-
-  // Architecture Validation
-  if (cleanEndpoint === '/architectures/validate') {
-    return {
-      is_valid: true,
-      errors: [],
-      warnings: [],
-      parsed_definition: {
-        name: 'Standard Layered Architecture',
-        components: [
-          { name: 'presentation', layer: 1 },
-          { name: 'application', layer: 2 },
-          { name: 'domain', layer: 3 },
-          { name: 'infrastructure', layer: 4 },
-        ]
-      }
-    } as unknown as T;
-  }
-
-  // Scans
-  if (cleanEndpoint === '/scans' || (cleanEndpoint.startsWith('/projects/') && cleanEndpoint.endsWith('/scans'))) {
-    const matchProjId = cleanEndpoint.startsWith('/projects/')
-      ? cleanEndpoint.split('/')[2]
-      : undefined;
-
-    if (cleanEndpoint === '/scans' && method === 'POST') {
-      let body: any = {};
-      try { body = JSON.parse(options.body as string); } catch {}
-      const targetProjId = body.project_id || 'proj-ecommerce-drift';
-      const newScan: ScanRun = {
-        id: 'scan-' + Date.now(),
-        project_id: targetProjId,
-        architecture_id: body.architecture_id || 'arch-layered-001',
-        status: 'completed',
-        started_at: new Date(Date.now() - 10000).toISOString(),
-        completed_at: new Date().toISOString(),
-        duration_ms: 12450,
-        source_version: body.source_version || 'v1.0.0',
-        files_analyzed: 8,
-        modules_discovered: 4,
-        dependencies_discovered: 6,
-        total_findings: 0,
-        critical_findings: 0,
-        high_findings: 0,
-        medium_findings: 0,
-        low_findings: 0,
-        compliance_percentage: 100,
-        created_at: new Date().toISOString(),
-      };
-      saveStoredOfflineScan(newScan);
-      return newScan as unknown as T;
-    }
-    return getStoredOfflineScans(matchProjId) as unknown as T;
-  }
-
-  if (cleanEndpoint.startsWith('/scans/') && !cleanEndpoint.includes('/findings') && !cleanEndpoint.includes('/graph') && !cleanEndpoint.includes('/report') && !cleanEndpoint.includes('/compare')) {
-    const scanId = cleanEndpoint.replace('/scans/', '');
-    return {
-      id: scanId || 'scan-run-latest-001',
-      project_id: 'proj-ecommerce-drift',
-      architecture_id: 'arch-layered-001',
-      status: 'completed',
-      started_at: new Date(Date.now() - 3600000).toISOString(),
-      completed_at: new Date(Date.now() - 3550000).toISOString(),
-      duration_ms: 50420,
-      source_version: 'v1.4.2-audit',
-      files_analyzed: 14,
-      modules_discovered: 8,
-      dependencies_discovered: 12,
-      total_findings: 2,
-      critical_findings: 1,
-      high_findings: 1,
-      medium_findings: 0,
-      low_findings: 0,
-      compliance_percentage: 85.7,
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-    } as unknown as T;
-  }
-
-  // Findings
-  if (cleanEndpoint.includes('/findings') && !cleanEndpoint.startsWith('/findings/')) {
-    return [
-      {
-        id: 'find-001',
-        scan_id: 'scan-run-latest-001',
-        project_id: 'proj-ecommerce-drift',
-        rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION',
-        rule_type: 'forbidden_dependency',
-        title: 'Domain Layer Violates Architecture: Direct dependency on Presentation Layer',
-        explanation: 'Module app.domain.order directly imports format_currency_response from app.presentation.routes. Domain layer must remain pure business logic and never depend on presentation concerns.',
-        severity: 'critical',
-        status: 'open',
-        source_component: 'domain',
-        target_component: 'presentation',
-        source_module: 'app.domain.order',
-        target_module: 'app.presentation.routes',
-        file_path: 'app/domain/order.py',
-        line_number: 11,
-        expected_behavior: 'Domain layer components must have zero dependencies on presentation concerns.',
-        actual_behavior: 'Direct import of presentation route formatter inside domain model order.py:11.',
-        evidence: 'from app.presentation.routes import format_currency_response',
-        confidence: 'high',
-        remediation: 'Remove presentation import from order.py. Move response formatting to presentation layer routes.',
-        first_detected_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-        last_detected_at: new Date().toISOString(),
-        created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-      {
-        id: 'find-002',
-        scan_id: 'scan-run-latest-001',
-        project_id: 'proj-ecommerce-drift',
-        rule_id: 'LAYER-DIRECTION-RULE',
-        rule_type: 'layer_violation',
-        title: 'Layer Direction Violation: Upward dependency from Layer 3 (Domain) to Layer 1 (Presentation)',
-        explanation: 'Layered architectural constraint violated. Lower layer components are strictly forbidden from depending on higher layer components.',
-        severity: 'high',
-        status: 'open',
-        source_component: 'domain',
-        target_component: 'presentation',
-        source_module: 'app.domain.order',
-        target_module: 'app.presentation.routes',
-        file_path: 'app/domain/order.py',
-        line_number: 11,
-        expected_behavior: 'Lower layer components must not depend on higher layers.',
-        actual_behavior: 'Domain layer (layer 3) depends on Presentation (layer 1).',
-        evidence: 'from app.presentation.routes import format_currency_response',
-        confidence: 'high',
-        remediation: 'Invert the dependency using domain events or application service orchestration.',
-        first_detected_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-        last_detected_at: new Date().toISOString(),
-        created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-        updated_at: new Date().toISOString(),
-      }
-    ] as unknown as T;
-  }
-
-  // Dependency Graph
-  if (cleanEndpoint.includes('/graph')) {
-    return {
-      scan_id: 'scan-run-latest-001',
-      project_id: 'proj-ecommerce-drift',
-      nodes: [
-        { id: 'app.presentation.routes', label: 'presentation.routes', component: 'presentation', layer: 1, node_type: 'module', file_path: 'app/presentation/routes.py', is_violation: false, classes_count: 1, functions_count: 4, imports_count: 3 },
-        { id: 'app.application.order_service', label: 'application.order_service', component: 'application', layer: 2, node_type: 'module', file_path: 'app/application/order_service.py', is_violation: false, classes_count: 1, functions_count: 3, imports_count: 4 },
-        { id: 'app.domain.order', label: 'domain.order', component: 'domain', layer: 3, node_type: 'module', file_path: 'app/domain/order.py', is_violation: true, classes_count: 2, functions_count: 5, imports_count: 2 },
-        { id: 'app.infrastructure.database', label: 'infrastructure.database', component: 'infrastructure', layer: 4, node_type: 'module', file_path: 'app/infrastructure/database.py', is_violation: false, classes_count: 1, functions_count: 4, imports_count: 2 },
-      ],
-      edges: [
-        { id: 'e1', source: 'app.presentation.routes', target: 'app.application.order_service', source_component: 'presentation', target_component: 'application', is_violation: false, edge_type: 'actual' },
-        { id: 'e2', source: 'app.application.order_service', target: 'app.domain.order', source_component: 'application', target_component: 'domain', is_violation: false, edge_type: 'actual' },
-        { id: 'e3', source: 'app.application.order_service', target: 'app.infrastructure.database', source_component: 'application', target_component: 'infrastructure', is_violation: false, edge_type: 'actual' },
-        { id: 'e4', source: 'app.domain.order', target: 'app.presentation.routes', source_component: 'domain', target_component: 'presentation', is_violation: true, violation_rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION', import_line: 11, import_statement: 'from app.presentation.routes import format_currency_response', edge_type: 'forbidden' },
-      ],
-      components: ['presentation', 'application', 'domain', 'infrastructure'],
-      total_modules: 4,
-      total_dependencies: 4,
-      total_violations: 1,
-    } as unknown as T;
-  }
-
-  // Overview
-  if (cleanEndpoint.startsWith('/overview')) {
-    let targetProjId: string | null = null;
-    try {
-      const q = endpoint.includes('?') ? endpoint.split('?')[1] : '';
-      const params = new URLSearchParams(q);
-      targetProjId = params.get('project_id');
-    } catch {}
-
-    const allProjects = getStoredOfflineProjects();
-    const targetProject = targetProjId
-      ? allProjects.find((p) => p.id === targetProjId)
-      : allProjects[0];
-
-    const projectScans = getStoredOfflineScans(targetProject?.id);
-    const latestScan = projectScans.length > 0 ? projectScans[0] : undefined;
-
-    if (!latestScan || (targetProject && targetProject.total_scans === 0)) {
-      return {
-        project_id: targetProject?.id || 'proj-ecommerce-drift',
-        project_name: targetProject?.name || 'Software Project',
-        total_projects: allProjects.length,
-        total_scans: 0,
-        total_findings: 0,
-        critical_findings: 0,
-        high_findings: 0,
-        medium_findings: 0,
-        low_findings: 0,
-        compliance_percentage: 100,
-        latest_scan: undefined,
-        severity_distribution: {
-          critical: 0,
-          high: 0,
-          medium: 0,
-          low: 0,
-        },
-        trends: [],
-        top_violated_rules: [],
-        component_stats: [],
-      } as unknown as T;
-    }
-
-    return {
-      project_id: targetProject?.id || 'proj-ecommerce-drift',
-      project_name: targetProject?.name || 'Software Architecture Drift Detector',
-      total_projects: allProjects.length,
-      total_scans: targetProject?.total_scans || projectScans.length,
-      total_findings: latestScan.total_findings,
-      critical_findings: latestScan.critical_findings,
-      high_findings: latestScan.high_findings,
-      medium_findings: latestScan.medium_findings,
-      low_findings: latestScan.low_findings,
-      compliance_percentage: latestScan.compliance_percentage,
-      latest_scan: latestScan,
-      severity_distribution: {
-        critical: latestScan.critical_findings,
-        high: latestScan.high_findings,
-        medium: latestScan.medium_findings,
-        low: latestScan.low_findings,
-      },
-      trends: [
-        {
-          timestamp: '2026-10-29',
-          scan_id: 'scan-run-earliest',
-          compliance_percentage: 71.4,
-          total_findings: 4,
-          critical_findings: 2,
-          high_findings: 2,
-        },
-        {
-          timestamp: '2026-10-30',
-          scan_id: 'scan-run-mid-1',
-          compliance_percentage: 78.5,
-          total_findings: 3,
-          critical_findings: 1,
-          high_findings: 2,
-        },
-        {
-          timestamp: '2026-10-31',
-          scan_id: 'scan-run-mid-2',
-          compliance_percentage: 85.7,
-          total_findings: 2,
-          critical_findings: 1,
-          high_findings: 1,
-        },
-        {
-          timestamp: '2026-11-01',
-          scan_id: latestScan.id,
-          compliance_percentage: latestScan.compliance_percentage,
-          total_findings: latestScan.total_findings,
-          critical_findings: latestScan.critical_findings,
-          high_findings: latestScan.high_findings,
-        },
-      ],
-      top_violated_rules: [
-        {
-          rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION',
-          rule_type: 'forbidden_dependency',
-          severity: 'critical',
-          count: 1,
-          description: 'Domain layer must never import presentation concerns',
-        },
-        {
-          rule_id: 'LAYER-DIRECTION-RULE',
-          rule_type: 'layer_violation',
-          severity: 'high',
-          count: 1,
-          description: 'Lower layers must not depend on higher layers',
-        },
-      ],
-      component_stats: [
-        {
-          component: 'presentation',
-          layer: 1,
-          modules_count: 2,
-          incoming_dependencies: 1,
-          outgoing_dependencies: 1,
-          violations_count: 0,
-          is_compliant: true,
-        },
-        {
-          component: 'application',
-          layer: 2,
-          modules_count: 2,
-          incoming_dependencies: 1,
-          outgoing_dependencies: 2,
-          violations_count: 0,
-          is_compliant: true,
-        },
-        {
-          component: 'domain',
-          layer: 3,
-          modules_count: 2,
-          incoming_dependencies: 1,
-          outgoing_dependencies: 1,
-          violations_count: latestScan.total_findings,
-          is_compliant: latestScan.total_findings === 0,
-        },
-        {
-          component: 'infrastructure',
-          layer: 4,
-          modules_count: 2,
-          incoming_dependencies: 1,
-          outgoing_dependencies: 0,
-          violations_count: 0,
-          is_compliant: true,
-        },
-      ],
-    } as unknown as T;
-  }
-
-  // Scan Comparison
-  if (cleanEndpoint.includes('/compare/')) {
-    const scanObjA = {
-      id: 'scan-run-earlier',
-      project_id: 'proj-ecommerce-drift',
-      architecture_id: 'arch-layered-001',
-      status: 'completed' as const,
-      started_at: new Date(Date.now() - 86400000).toISOString(),
-      completed_at: new Date(Date.now() - 86350000).toISOString(),
-      duration_ms: 48100,
-      source_version: 'v1.4.1-baseline',
-      files_analyzed: 14,
-      modules_discovered: 8,
-      dependencies_discovered: 12,
-      total_findings: 3,
-      critical_findings: 1,
-      high_findings: 1,
-      medium_findings: 1,
-      low_findings: 0,
-      compliance_percentage: 78.5,
-      created_at: new Date(Date.now() - 86400000).toISOString(),
-    };
-    const scanObjB = {
-      id: 'scan-run-latest-001',
-      project_id: 'proj-ecommerce-drift',
-      architecture_id: 'arch-layered-001',
-      status: 'completed' as const,
-      started_at: new Date(Date.now() - 3600000).toISOString(),
-      completed_at: new Date(Date.now() - 3550000).toISOString(),
-      duration_ms: 50420,
-      source_version: 'v1.4.2-audit',
-      files_analyzed: 14,
-      modules_discovered: 8,
-      dependencies_discovered: 12,
-      total_findings: 2,
-      critical_findings: 1,
-      high_findings: 1,
-      medium_findings: 0,
-      low_findings: 0,
-      compliance_percentage: 85.7,
-      created_at: new Date(Date.now() - 3600000).toISOString(),
-    };
-    return {
-      scan_a: scanObjA,
-      scan_b: scanObjB,
-      compliance_delta: 7.2,
-      findings_delta: -1,
-      new_findings: [],
-      resolved_findings: [
-        {
-          id: 'res-001',
-          scan_id: 'scan-run-earlier',
-          project_id: 'proj-ecommerce-drift',
-          rule_id: 'CIRCULAR-DEPENDENCY-RULE',
-          rule_type: 'circular_dependency',
-          title: 'Circular dependency between application and infrastructure resolved',
-          explanation: 'Previous circular loop was broken by introducing repository interfaces.',
-          severity: 'medium',
-          status: 'resolved',
-          source_component: 'application',
-          target_component: 'infrastructure',
-          confidence: 'high',
-          first_detected_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-          last_detected_at: new Date(Date.now() - 86400000).toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 3).toISOString(),
-          updated_at: new Date().toISOString(),
-        }
-      ],
-      persistent_findings: [
-        {
-          id: 'find-001',
-          scan_id: 'scan-run-latest-001',
-          project_id: 'proj-ecommerce-drift',
-          rule_id: 'FORBIDDEN-DOMAIN-TO-PRESENTATION',
-          rule_type: 'forbidden_dependency',
-          title: 'Domain Layer Violates Architecture: Direct dependency on Presentation Layer',
-          explanation: 'Module app.domain.order directly imports format_currency_response from app.presentation.routes.',
-          severity: 'critical',
-          status: 'open',
-          source_component: 'domain',
-          target_component: 'presentation',
-          source_module: 'app.domain.order',
-          target_module: 'app.presentation.routes',
-          file_path: 'app/domain/order.py',
-          line_number: 11,
-          evidence: 'from app.presentation.routes import format_currency_response',
-          confidence: 'high',
-          first_detected_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-          last_detected_at: new Date().toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-        {
-          id: 'find-002',
-          scan_id: 'scan-run-latest-001',
-          project_id: 'proj-ecommerce-drift',
-          rule_id: 'LAYER-DIRECTION-RULE',
-          rule_type: 'layer_violation',
-          title: 'Layer Direction Violation: Upward dependency from Layer 3 (Domain) to Layer 1 (Presentation)',
-          explanation: 'Lower layer components are strictly forbidden from depending on higher layer components.',
-          severity: 'high',
-          status: 'open',
-          source_component: 'domain',
-          target_component: 'presentation',
-          source_module: 'app.domain.order',
-          target_module: 'app.presentation.routes',
-          file_path: 'app/domain/order.py',
-          line_number: 11,
-          evidence: 'from app.presentation.routes import format_currency_response',
-          confidence: 'high',
-          first_detected_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-          last_detected_at: new Date().toISOString(),
-          created_at: new Date(Date.now() - 86400000 * 2).toISOString(),
-          updated_at: new Date().toISOString(),
-        }
-      ]
-    } as unknown as T;
-  }
-
-  // Finding details or status
-  if (cleanEndpoint.startsWith('/findings/')) {
-    return {
-      id: 'find-001',
-      status: 'acknowledged',
-      title: 'Domain Layer Violates Architecture: Direct dependency on Presentation Layer',
-      severity: 'critical',
-    } as unknown as T;
-  }
-
-  // Report JSON
-  if (cleanEndpoint.includes('/report/json')) {
-    return {
-      scan_id: 'scan-run-latest-001',
-      project_name: 'Software Architecture Drift Detector',
-      compliance_percentage: 85.7,
-      total_findings: 2,
-      timestamp: new Date().toISOString(),
-      findings: [
-        { id: 'find-001', rule: 'FORBIDDEN-DOMAIN-TO-PRESENTATION', severity: 'critical', file: 'app/domain/order.py:11' },
-        { id: 'find-002', rule: 'LAYER-DIRECTION-RULE', severity: 'high', file: 'app/domain/order.py:11' },
-      ]
-    } as unknown as T;
-  }
-
-  // AI Assistance
-  if (cleanEndpoint === '/ai/status') {
-    return {
-      ai_enabled: true,
-      provider: 'built-in-heuristics',
-      is_configured: true,
-    } as unknown as T;
-  }
-
-  if (cleanEndpoint === '/ai/explain-finding') {
-    return {
-      ai_explanation: 'Architectural analysis indicates an inverted dependency boundary violation. The Domain layer should embody pure business concepts and invariants. By coupling directly to Presentation route utilities, changes to web transport logic risk destabilizing domain logic. Recommended remediation is to invert the dependency using ports and adapters or by dispatching domain events.',
-      architectural_remediation: '1. Extract presentation formatting into a dedicated view-model assembler.\n2. Pass pure domain primitives to the route layer.\n3. Verify layer boundary compliance via automated scan.',
-      source: 'Architecture AI Heuristic Engine',
+      database: 'demo-mode',
+      storage: 'demo-mode',
+      version: '1.0.0-dev-demo',
+      project: 'Software Architecture Drift Detector [DEV DEMO]',
     } as unknown as T;
   }
 
   return {} as unknown as T;
 }
 
+/**
+ * Primary HTTP request dispatcher.
+ * Communicates strictly with the validated backend API and never fakes production data or authentication.
+ */
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  // Check development demo environment first (only active if isDevDemoEnabled())
+  if (isDevDemoEnabled()) {
+    return handleDevDemoOnly<T>(endpoint, options);
+  }
+
   const base = getApiBaseUrl();
 
-  if (isStaticProductionHost() && !base) {
-    return handleStaticOffline<T>(endpoint, options);
+  if (!base) {
+    throw new Error(
+      'Backend connection required: No backend API server is configured. Please deploy the FastAPI backend and configure its URL in "Configure Backend API Server".'
+    );
   }
 
   const url = `${base}${endpoint}`;
+
+  if (!isAllowedBackendOrigin(url)) {
+    throw new Error(`Security Error: Destination URL '${url}' is not an approved backend origin.`);
+  }
 
   // Assemble headers with dual authentication: HttpOnly cookie + Bearer token
   const headers: Record<string, string> = {
@@ -1011,27 +317,20 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
       headers,
     });
   } catch {
-    if (isStaticProductionHost()) {
-      return handleStaticOffline<T>(endpoint, options);
-    }
     throw new Error(
-      `Unable to reach backend service at ${base}. Please ensure the server is active on http://127.0.0.1:8000.`
+      `Unable to reach backend service at ${base}. Please ensure the server is running and accessible.`
     );
   }
 
   if (!response.ok) {
-    if (isStaticProductionHost() && (response.status === 404 || response.status === 405)) {
-      return handleStaticOffline<T>(endpoint, options);
-    }
-
     let errorMessage = `API request failed: ${response.status} ${response.statusText}`.trim();
 
     if (response.status === 405) {
-      errorMessage = `Method Not Allowed (405): The API endpoint at '${url}' does not allow HTTP ${options.method || 'GET'}. If accessing from a static host like GitHub Pages, configure VITE_API_URL or run the backend locally using start_servers.bat.`;
+      errorMessage = `Method Not Allowed (405): The API endpoint at '${url}' does not allow HTTP ${options.method || 'GET'}.`;
     } else if (response.status === 404) {
       errorMessage = `API endpoint not found (404): '${url}'. Please verify that the backend API route exists.`;
     } else if (response.status === 502) {
-      errorMessage = 'Backend service is unavailable (502 Bad Gateway). Please verify that the server is running on http://127.0.0.1:8000.';
+      errorMessage = 'Backend service is unavailable (502 Bad Gateway). Please verify that the server is running.';
     } else if (response.status === 503) {
       errorMessage = 'Service temporarily unavailable (503). Please try again shortly.';
     } else if (response.status === 504) {
@@ -1054,7 +353,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
         errorMessage = errorJson.message;
       }
     } catch {
-      // Retain the informative errorMessage if response is HTML (e.g. 405 static page) or plain text
+      // Retain the informative errorMessage if response is HTML or plain text
     }
 
     // Handle 401 Unauthorized globally for protected resources
@@ -1197,11 +496,11 @@ export const api = {
 
   uploadProjectZip: async (projectId: string, file: File): Promise<{ message: string; repository_path: string }> => {
     const base = getApiBaseUrl();
-    if (isStaticProductionHost() && !base) {
-      return {
-        message: `Package ${file.name} uploaded and extracted successfully (14 Python files discovered).`,
-        repository_path: 'sample-project/app',
-      };
+    if (!base) {
+      throw new Error('Backend connection required: Cannot upload archive without an active backend connection.');
+    }
+    if (!isAllowedBackendOrigin(base)) {
+      throw new Error('Security Error: Untrusted backend origin for archive upload.');
     }
 
     const formData = new FormData();
@@ -1291,29 +590,31 @@ export const api = {
     const query = projectId ? `?project_id=${projectId}` : '';
     return request<OverviewMetrics>(`/overview${query}`);
   },
-  getJsonReportUrl: (scanId: string) => `${getApiBaseUrl()}/scans/${scanId}/report/json`,
-  getCsvReportUrl: (scanId: string) => `${getApiBaseUrl()}/scans/${scanId}/report/csv`,
-  getPdfReportUrl: (scanId: string) => `${getApiBaseUrl()}/scans/${scanId}/report/pdf`,
+  getJsonReportUrl: (scanId: string) => {
+    const base = getApiBaseUrl();
+    if (!base || !isAllowedBackendOrigin(base)) throw new Error('Untrusted or unconfigured backend API origin.');
+    return `${base}/scans/${scanId}/report/json`;
+  },
+  getCsvReportUrl: (scanId: string) => {
+    const base = getApiBaseUrl();
+    if (!base || !isAllowedBackendOrigin(base)) throw new Error('Untrusted or unconfigured backend API origin.');
+    return `${base}/scans/${scanId}/report/csv`;
+  },
+  getPdfReportUrl: (scanId: string) => {
+    const base = getApiBaseUrl();
+    if (!base || !isAllowedBackendOrigin(base)) throw new Error('Untrusted or unconfigured backend API origin.');
+    return `${base}/scans/${scanId}/report/pdf`;
+  },
   downloadCsvReport: async (scanId: string, customFilename?: string): Promise<void> => {
     const base = getApiBaseUrl();
-    if (isStaticProductionHost() && !base) {
-      const csvContent = `Finding ID,Severity,Rule ID,Source Module,Target Module,File,Line,Explanation\r\nfind-001,critical,FORBIDDEN-DOMAIN-TO-PRESENTATION,app.domain.order,app.presentation.routes,app/domain/order.py,11,"Module app.domain.order directly imports format_currency_response from app.presentation.routes. Domain layer must remain pure business logic."\r\nfind-002,high,LAYER-DIRECTION-RULE,app.domain.order,app.presentation.routes,app/domain/order.py,11,"Layered architectural constraint violated. Lower layer components are strictly forbidden from depending on higher layer components."\r\n`;
-      const formattedData = `\uFEFF${csvContent}`;
-      const blob = new Blob([formattedData], { type: 'text/csv;charset=utf-8;' });
-      const objectUrl = window.URL.createObjectURL(blob);
-      const filename = customFilename || `drift_report_${scanId.substring(0, 8)}.csv`;
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        if (link.parentNode) link.parentNode.removeChild(link);
-        window.URL.revokeObjectURL(objectUrl);
-      }, 150);
-      return;
+    if (!base) {
+      throw new Error('Backend connection required: Cannot download CSV report without an active backend connection.');
     }
     const url = `${base}/scans/${scanId}/report/csv`;
+    if (!isAllowedBackendOrigin(url)) {
+      throw new Error('Security Error: Attempted to download CSV report from an untrusted backend origin.');
+    }
+
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
       'Accept': 'text/csv',
@@ -1382,23 +683,14 @@ export const api = {
   },
   downloadPdfReport: async (scanId: string, customFilename?: string): Promise<void> => {
     const base = getApiBaseUrl();
-    if (isStaticProductionHost() && !base) {
-      const summaryText = `SOFTWARE ARCHITECTURE DRIFT DETECTOR AUDIT REPORT\r\nScan ID: ${scanId}\r\nCompliance: 85.7%\r\nTotal Findings: 2\r\n1. [CRITICAL] FORBIDDEN-DOMAIN-TO-PRESENTATION in app/domain/order.py:11\r\n2. [HIGH] LAYER-DIRECTION-RULE in app/domain/order.py:11\r\n`;
-      const blob = new Blob([summaryText], { type: 'text/plain;charset=utf-8;' });
-      const objectUrl = window.URL.createObjectURL(blob);
-      const filename = customFilename || `drift_report_${scanId.substring(0, 8)}.txt`;
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      setTimeout(() => {
-        if (link.parentNode) link.parentNode.removeChild(link);
-        window.URL.revokeObjectURL(objectUrl);
-      }, 150);
-      return;
+    if (!base) {
+      throw new Error('Backend connection required: Cannot download PDF report without an active backend connection.');
     }
     const url = `${base}/scans/${scanId}/report/pdf`;
+    if (!isAllowedBackendOrigin(url)) {
+      throw new Error('Security Error: Attempted to download PDF report from an untrusted backend origin.');
+    }
+
     const token = getStoredSessionToken();
     const headers: Record<string, string> = {
       'Accept': 'application/pdf',

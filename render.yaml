@@ -27,3 +27,5 @@ services:
         value: "pirajan20012009@gmail.com"
       - key: SMTP_USE_TLS
         value: "true"
+      - key: SECRET_KEY
+        generateValue: true

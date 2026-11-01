@@ -22,14 +22,20 @@ export const LoginPage: React.FC = () => {
   const [showApiConfig, setShowApiConfig] = useState(false);
   const [customApiInput, setCustomApiInput] = useState(() => getCustomApiUrl() || '');
   const [apiSaveSuccess, setApiSaveSuccess] = useState(false);
+  const [apiSaveError, setApiSaveError] = useState<string | null>(null);
 
   const handleSaveApiUrl = (e: React.FormEvent) => {
     e.preventDefault();
-    setCustomApiUrl(customApiInput.trim() || null);
-    setApiSaveSuccess(true);
-    setTimeout(() => {
-      window.location.reload();
-    }, 500);
+    setApiSaveError(null);
+    try {
+      setCustomApiUrl(customApiInput.trim() || null);
+      setApiSaveSuccess(true);
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    } catch (err: any) {
+      setApiSaveError(err.message || 'Invalid API URL');
+    }
   };
 
   // Check if redirected from a protected page
@@ -250,6 +256,9 @@ export const LoginPage: React.FC = () => {
                   For static hosting on GitHub Pages, enter your deployed FastAPI URL (e.g.{' '}
                   <code className="font-mono text-[#0F172A]">https://api.yourdomain.com</code>) to enable live authentication and scans.
                 </p>
+                {apiSaveError && (
+                  <p className="text-[11px] text-[#B42318] font-semibold bg-[#FEE2E2] p-2 rounded border border-[#FECACA]">{apiSaveError}</p>
+                )}
                 <form onSubmit={handleSaveApiUrl} className="flex flex-col sm:flex-row gap-2 pt-1">
                   <input
                     type="url"

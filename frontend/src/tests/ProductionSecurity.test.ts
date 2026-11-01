@@ -1,0 +1,219 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  api,
+  isAllowedBackendOrigin,
+  setCustomApiUrl,
+  getApiBaseUrl,
+  getStoredSessionToken,
+  setStoredSessionToken,
+  CUSTOM_API_URL_STORAGE_KEY,
+} from '../api/client';
+
+describe('Production Readiness & Security Hardening Audit', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  describe('1. Fake Login Prevention in Production', () => {
+    it('strictly fails and throws when backend is offline, never authenticating locally', async () => {
+      // Mock fetch to simulate network failure (backend unreachable)
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+
+      await expect(
+        api.login({ email: 'architect@enterprise.com', password: 'AnyPassword123!' })
+      ).rejects.toThrow(/Unable to reach backend service/i);
+
+      // Verify NO session token or fake demo user was created
+      expect(getStoredSessionToken()).toBeNull();
+      expect(localStorage.getItem('drift_session_token')).toBeNull();
+      expect(sessionStorage.getItem('drift_session_token')).toBeNull();
+      expect(localStorage.getItem('drift_demo_user')).toBeNull();
+    });
+
+    it('rejects login when backend returns 502 Bad Gateway and preserves the error', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        json: () => Promise.resolve({}),
+      });
+
+      await expect(
+        api.login({ email: 'architect@enterprise.com', password: 'AnyPassword123!' })
+      ).rejects.toThrow(/502 Bad Gateway/i);
+
+      expect(getStoredSessionToken()).toBeNull();
+    });
+
+    it('rejects login on invalid credentials and returns backend error detail', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: () => Promise.resolve({ detail: 'Invalid email or password.' }),
+      });
+
+      await expect(
+        api.login({ email: 'user@test.com', password: 'WrongPassword' })
+      ).rejects.toThrow('Invalid email or password.');
+
+      expect(getStoredSessionToken()).toBeNull();
+    });
+  });
+
+  describe('2. Backend Unavailable Scenarios & Elimination of Fake Data', () => {
+    it('throws when getting projects with backend offline, never returning hardcoded sample project', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Network Error'));
+
+      await expect(api.getProjects()).rejects.toThrow(/Unable to reach backend service/i);
+
+      // Verify no fake project exists in storage
+      expect(localStorage.getItem('drift_offline_projects')).toBeNull();
+    });
+
+    it('throws when getting overview metrics with backend offline, never returning fake compliance scores', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Network Error'));
+
+      await expect(api.getOverview()).rejects.toThrow(/Unable to reach backend service/i);
+    });
+
+    it('refuses to upload archives when backend is unavailable, never faking extraction', async () => {
+      globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Network Error'));
+      const dummyFile = new File(['dummy content'], 'project.zip', { type: 'application/zip' });
+
+      await expect(
+        api.uploadProjectZip('proj-test-123', dummyFile)
+      ).rejects.toThrow();
+    });
+
+    it('refuses to download CSV or PDF reports when backend returns 404 or 500', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+        json: () => Promise.resolve({ detail: 'Scan report not found.' }),
+      });
+
+      await expect(api.downloadCsvReport('scan-missing')).rejects.toThrow(/Scan report not found/i);
+      await expect(api.downloadPdfReport('scan-missing')).rejects.toThrow(/Scan report not found/i);
+    });
+  });
+
+  describe('3. API URL Security & Origin Whitelist Validation', () => {
+    it('strictly rejects unapproved origins and insecure protocols', () => {
+      // Insecure HTTP to non-localhost
+      expect(isAllowedBackendOrigin('http://evil.com')).toBe(false);
+      expect(isAllowedBackendOrigin('http://my-render-app.onrender.com')).toBe(false);
+
+      // Untrusted HTTPS external origins
+      expect(isAllowedBackendOrigin('https://attacker.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://subdomain.attacker.com')).toBe(false);
+      expect(isAllowedBackendOrigin('https://evil-onrender.com.attacker.com')).toBe(false);
+      expect(isAllowedBackendOrigin('javascript:alert(1)')).toBe(false);
+      expect(isAllowedBackendOrigin('data:text/html,evil')).toBe(false);
+
+      // Null, empty, or undefined
+      expect(isAllowedBackendOrigin('')).toBe(false);
+      expect(isAllowedBackendOrigin(null as any)).toBe(false);
+    });
+
+    it('approves legitimate production platforms and local development origins', () => {
+      // Loopback origins
+      expect(isAllowedBackendOrigin('http://localhost:8000')).toBe(true);
+      expect(isAllowedBackendOrigin('http://127.0.0.1:8000')).toBe(true);
+      expect(isAllowedBackendOrigin('/api/v1')).toBe(true);
+
+      // Render, Railway, Fly.dev HTTPS hosts
+      expect(isAllowedBackendOrigin('https://software-architecture-drift-detector.onrender.com')).toBe(true);
+      expect(isAllowedBackendOrigin('https://api-service.railway.app')).toBe(true);
+      expect(isAllowedBackendOrigin('https://api-service.fly.dev')).toBe(true);
+    });
+
+    it('setCustomApiUrl rejects unapproved URLs and throws descriptive security errors', () => {
+      expect(() => setCustomApiUrl('https://evil-phishing.com')).toThrow(/Invalid backend URL/i);
+      expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
+
+      expect(() => setCustomApiUrl('http://insecure-domain.org')).toThrow(/Invalid backend URL/i);
+      expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
+    });
+
+    it('purges unapproved custom backend URLs stored in localStorage', () => {
+      localStorage.setItem(CUSTOM_API_URL_STORAGE_KEY, 'https://malicious-host.com/api/v1');
+      const base = getApiBaseUrl();
+
+      // Malicious URL should NOT be returned
+      expect(base).not.toContain('malicious-host.com');
+      // Storage should be purged
+      expect(localStorage.getItem(CUSTOM_API_URL_STORAGE_KEY)).toBeNull();
+    });
+  });
+
+  describe('4. Authentication Bearer Token Isolation', () => {
+    it('attaches authorization headers only to approved backend origins', async () => {
+      setStoredSessionToken('valid-production-jwt-token-999');
+
+      let capturedHeaders: Record<string, string> = {};
+      globalThis.fetch = vi.fn().mockImplementation((_url, init) => {
+        capturedHeaders = init?.headers || {};
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ status: 'ok' }),
+        });
+      });
+
+      await api.getMe();
+
+      expect(capturedHeaders['Authorization']).toBe('Bearer valid-production-jwt-token-999');
+      expect(capturedHeaders['X-Session-Token']).toBe('valid-production-jwt-token-999');
+    });
+
+    it('clears session token on 401 Unauthorized API responses', async () => {
+      setStoredSessionToken('stale-jwt-token');
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        json: () => Promise.resolve({ detail: 'Token expired' }),
+      });
+
+      await expect(api.getProjects()).rejects.toThrow('Token expired');
+      expect(getStoredSessionToken()).toBeNull();
+    });
+  });
+
+  describe('5. Fake Findings Never Appear in Production', () => {
+    it('returns empty array when backend has zero findings, never injecting hardcoded violations', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([]),
+      });
+
+      const findings = await api.getScanFindings('scan-test-empty');
+      expect(findings).toEqual([]);
+      expect(findings.some((f) => f.rule_id === 'FORBIDDEN-DOMAIN-TO-PRESENTATION')).toBe(false);
+      expect(findings.some((f) => f.rule_id === 'LAYER-DIRECTION-RULE')).toBe(false);
+    });
+
+    it('throws error when findings endpoint fails, never falling back to mock findings', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Server Error',
+        json: () => Promise.resolve({ detail: 'Failed to query findings table' }),
+      });
+
+      await expect(api.getScanFindings('scan-err')).rejects.toThrow('Failed to query findings table');
+    });
+  });
+});
