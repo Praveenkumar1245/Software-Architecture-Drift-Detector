@@ -140,3 +140,73 @@ def test_zip_upload_and_scan_workflow(client: TestClient):
     assert csv_rep.status_code == 200
     assert csv_rep.content.startswith(b"\xef\xbb\xbf")
     assert "Finding ID" in csv_rep.content.decode("utf-8-sig")
+
+    # Verify PDF Report generation
+    pdf_rep = client.get(f"/api/v1/scans/{scan_id}/report/pdf", headers=user["headers"])
+    assert pdf_rep.status_code == 200
+    assert pdf_rep.headers["content-type"].startswith("application/pdf")
+    assert pdf_rep.content.startswith(b"%PDF")
+
+    # Verify Real Dependency Graph generation
+    graph_res = client.get(f"/api/v1/scans/{scan_id}/graph", headers=user["headers"])
+    assert graph_res.status_code == 200
+    graph_data = graph_res.json()
+    assert "nodes" in graph_data
+    assert "edges" in graph_data
+    assert graph_data["scan_id"] == scan_id
+    assert len(graph_data["nodes"]) >= 2
+    assert any(n["label"] == "app.application.service" for n in graph_data["nodes"])
+    assert any(n["label"] == "app.domain.model" for n in graph_data["nodes"])
+    assert any(e["source"] == "app.application.service" and e["target"] == "app.domain.model" for e in graph_data["edges"])
+
+def test_user_scan_and_report_access_isolation(client: TestClient):
+    """User B cannot access User A's scans, reports, or dependency graphs."""
+    user_a = register_and_login_user(client)
+    user_b = register_and_login_user(client)
+
+    # User A creates project, uploads code, and runs scan
+    proj = client.post(
+        "/api/v1/projects",
+        json={"name": "Confidential Architecture", "primary_language": "python"},
+        headers=user_a["headers"]
+    ).json()
+    proj_id = proj["id"]
+
+    valid_zip = create_valid_project_zip()
+    client.post(
+        f"/api/v1/projects/{proj_id}/upload-zip",
+        files={"file": ("project.zip", valid_zip, "application/zip")},
+        headers=user_a["headers"]
+    )
+
+    arch_json = """{
+      "name": "Standard Layered",
+      "version": 1,
+      "components": [
+        {"name": "application", "layer": 1, "path_patterns": ["app/application/**"], "allowed_dependencies": ["domain"], "forbidden_dependencies": []},
+        {"name": "domain", "layer": 2, "path_patterns": ["app/domain/**"], "allowed_dependencies": [], "forbidden_dependencies": ["application"]}
+      ],
+      "rules": []
+    }"""
+    client.post(
+        "/api/v1/architectures",
+        json={"project_id": proj_id, "name": "Layered Arch", "format": "json", "raw_content": arch_json, "is_active": True},
+        headers=user_a["headers"]
+    )
+
+    scan_res = client.post(
+        "/api/v1/scans",
+        json={"project_id": proj_id},
+        headers=user_a["headers"]
+    )
+    assert scan_res.status_code == 201
+    scan_id = scan_res.json()["id"]
+
+    # User B attempts to access User A's scan data -> 404 Not Found
+    assert client.get(f"/api/v1/scans/{scan_id}", headers=user_b["headers"]).status_code == 404
+    assert client.get(f"/api/v1/scans/{scan_id}/graph", headers=user_b["headers"]).status_code == 404
+    assert client.get(f"/api/v1/scans/{scan_id}/report/json", headers=user_b["headers"]).status_code == 404
+    assert client.get(f"/api/v1/scans/{scan_id}/report/csv", headers=user_b["headers"]).status_code == 404
+    assert client.get(f"/api/v1/scans/{scan_id}/report/pdf", headers=user_b["headers"]).status_code == 404
+    assert client.get(f"/api/v1/scans/{scan_id}/findings", headers=user_b["headers"]).status_code == 404
+
