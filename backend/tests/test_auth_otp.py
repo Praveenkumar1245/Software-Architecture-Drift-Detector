@@ -141,3 +141,4 @@ def test_forgot_password_and_reset_flow(client: TestClient):
     new_login = client.post("/api/v1/auth/login", json={"email": email, "password": new_pwd})
     assert new_login.status_code == 200
     assert new_login.json()["user"]["email"] == email
+

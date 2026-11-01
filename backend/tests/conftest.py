@@ -34,3 +34,4 @@ def db():
 @pytest.fixture
 def client():
     return TestClient(app)
+

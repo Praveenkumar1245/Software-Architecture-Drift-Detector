@@ -244,3 +244,4 @@ def test_invalid_zip_and_empty_zip_handling():
         target_empty = tmp_path / "extracted_empty"
         files = sanitize_and_extract_zip(empty_zip, target_empty)
         assert len(files) == 0
+

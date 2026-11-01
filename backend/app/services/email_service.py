@@ -1132,14 +1132,19 @@ The Drift Detector – Architecture Quality Team
             _record_to_mailbox(dev_res)
             return dev_res
 
-        # Development Mailbox mode (explicitly enabled)
-        if settings.EMAIL_TEST_MODE:
+        # Development Mailbox mode (explicitly enabled OR credentials not configured)
+        if settings.EMAIL_TEST_MODE or not (cls.is_smtp_configured() or cls.is_brevo_configured()):
             settings.ensure_directories()
             timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
             sanitized_email = to_email.replace("@", "_at_").replace(".", "_")
             file_base = f"{timestamp}_{sanitized_email}_{email_type}"
             data_file = settings.MAILBOX_DIR / f"{file_base}.json"
             html_file = settings.MAILBOX_DIR / f"{file_base}.html"
+            note = (
+                "Development mailbox mode enabled via EMAIL_TEST_MODE=true."
+                if settings.EMAIL_TEST_MODE
+                else "SMTP/Brevo credentials not configured. Captured to development mailbox."
+            )
             payload = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "recipient": to_email,
@@ -1147,7 +1152,7 @@ The Drift Detector – Architecture Quality Team
                 "subject": subject,
                 "action_url": action_url,
                 "token": token,
-                "note": "Development mailbox mode enabled via EMAIL_TEST_MODE=true."
+                "note": note
             }
             with open(data_file, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
